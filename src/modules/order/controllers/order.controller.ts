@@ -32,14 +32,6 @@ export class OrderController {
     };
   }
 
-  @Get()
-  async findAll(@Request() req, @Query('status') status?: string) {
-    // Nếu status là undefined hoặc 'all', truyền null vào service để lấy tất cả
-    const filterStatus = (status === 'all' || !status) ? undefined : status.toUpperCase();
-    return this.orderService.getUserOrders(req.user.id, filterStatus);
-  }
-
-  // API lấy chi tiết đơn hàng (Frontend gọi tại trang Payment Success)
   @Get(':id')
   async findOne(@Request() req, @Param('id') id: string) {
     return this.orderService.findOne(id, req.user.id);

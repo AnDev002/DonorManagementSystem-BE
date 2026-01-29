@@ -6,7 +6,7 @@ import { TrackingService } from '../../modules/tracking/tracking.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { EventType } from '../../modules/tracking/dto/track-event.dto';
 import { PointService } from '../../modules/point/point.service';
-import { OrderStatus, PointType, Prisma } from '@prisma/client';
+import { PointType, Prisma } from '@prisma/client';
 import { GhnService } from '../../modules/ghn/ghn.service';
 import { PaymentService } from '../payment/payment.service';
 
@@ -215,44 +215,7 @@ export class OrderService {
     ]);
     return { data: orders, meta: { total, page: Number(page), limit: Number(limit), totalPages: Math.ceil(total / limit) } };
   }
-  async updateOrderStatus(orderId: string, sellerId: string, status: OrderStatus) {
-    // Kiểm tra quyền: Order này phải chứa sản phẩm của Shop thuộc Seller này
-    // (Trong schema của bạn, Order chưa có shopId trực tiếp, 
-    // nhưng ta có thể check qua items -> product -> sellerId)
-    
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
-      include: { items: { include: { product: true } } }
-    });
 
-    if (!order) throw new NotFoundException('Không tìm thấy đơn hàng');
-
-    // Cập nhật trạng thái
-    return this.prisma.order.update({
-      where: { id: orderId },
-      data: { status }
-    });
-  }
-  async getSellerOrders(userId: string, status?: string) {
-    // Tìm shop của user này trước
-    const shop = await this.prisma.shop.findUnique({ where: { ownerId: userId } });
-    
-    return this.prisma.order.findMany({
-      where: {
-        items: {
-          some: {
-            product: { shopId: shop?.id }
-          }
-        },
-        ...(status && status !== 'ALL' ? { status: status as any } : {})
-      },
-      include: {
-        user: { select: { name: true, phone: true } },
-        items: { include: { product: true } }
-      },
-      orderBy: { createdAt: 'desc' }
-    });
-  }
   // --- 2. TẠO ORDER ---
   async createOrder(userId: string, dto: CreateOrderDto) {
     const preview = await this.previewOrder(userId, dto);

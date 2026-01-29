@@ -1,8 +1,7 @@
-import { Controller, Post, Body, UseGuards, Request, Get, Param, Query, Patch } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Request, Get, Param, Query } from '@nestjs/common';
 import { JwtAuthGuard } from '../../auth/guards/jwt.guard';
 import { OrderService } from '../order.service';
 import { CreateOrderDto } from '../dto/create-order.dto';
-import { OrderStatus } from '@prisma/client';
 
 @Controller('orders')
 @UseGuards(JwtAuthGuard)
@@ -38,26 +37,9 @@ export class OrderController {
     const filterStatus = (status === 'all' || !status) ? undefined : status.toUpperCase();
     return this.orderService.getUserOrders(req.user.id, filterStatus);
   }
-
+  
   @Get(':id')
   async findOne(@Request() req, @Param('id') id: string) {
     return this.orderService.findOne(id, req.user.id);
-  }
-
-  @Patch(':id/status')
-  @UseGuards(JwtAuthGuard)
-  async updateStatus(
-    @Param('id') id: string,
-    @Body('status') status: OrderStatus,
-    @Request() req
-  ) {
-    return this.orderService.updateOrderStatus(id, req.user.id, status);
-  }
-
-  // Endpoint lấy đơn hàng riêng cho seller
-  @Get('seller')
-  @UseGuards(JwtAuthGuard)
-  async getSellerOrders(@Request() req, @Query('status') status?: string) {
-    return this.orderService.getSellerOrders(req.user.id, status);
   }
 }

@@ -13,6 +13,7 @@ import { DatabaseModule } from 'src/database/database.module';
 import { AdminOrderController } from './controllers/admin-order.controller';
 import { GhnModule } from '../ghn/ghn.module';
 import { PaymentModule } from '../payment/payment.module';
+import { UserOrderController } from './controllers/user.order.controller';
 @Module({
   imports: [
     DatabaseModule,
@@ -26,7 +27,7 @@ import { PaymentModule } from '../payment/payment.module';
       name: 'order_queue',
     }),
   ], 
-  controllers: [OrderController, AdminOrderController],
+  controllers: [OrderController, AdminOrderController, UserOrderController],
   providers: [
     OrderService,  
     OrderProcessor

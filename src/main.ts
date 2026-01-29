@@ -55,7 +55,6 @@ export class RedisIoAdapter extends IoAdapter {
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.setGlobalPrefix('api');
   app.use(cookieParser());
   // 1. Cấu hình CORS
   app.enableCors({

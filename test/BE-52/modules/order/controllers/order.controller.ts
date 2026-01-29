@@ -40,7 +40,7 @@ export class OrderController {
   }
 
   // API lấy chi tiết đơn hàng (Frontend gọi tại trang Payment Success)
-  @Get('detail/:id')
+  @Get(':id')
   async findOne(@Request() req, @Param('id') id: string) {
     return this.orderService.findOne(id, req.user.id);
   }

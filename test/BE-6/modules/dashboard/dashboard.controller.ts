@@ -1,4 +1,4 @@
-import { Controller, Get, Request, UseGuards } from '@nestjs/common';
+import { Controller, Get, UseGuards } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 // SỬA DÒNG NÀY: Dùng đường dẫn đúng (lùi 1 cấp) hoặc đường dẫn tuyệt đối
 import { JwtAuthGuard } from '../auth/guards/jwt.guard'; 
@@ -21,13 +21,5 @@ export class DashboardController {
   @Get('stats')
   async getStats() {
     return this.dashboardService.getStats();
-  }
-
-  // THÊM MỚI: API cho Seller
-  @Get('seller/stats')
-  @Roles(Role.SELLER)
-  async getSellerStats(@Request() req) {
-    // req.user được lấy từ JwtStrategy
-    return this.dashboardService.getSellerStats(req.user.id);
   }
 }

@@ -36,4 +36,79 @@ export class DashboardService {
       activeShops,
     };
   }
+
+  async getSellerStats(sellerId: string) {
+    // 1. Tính tổng doanh thu
+    const revenueResult = await this.prisma.orderItem.aggregate({
+      _sum: {
+        price: true, // Kiểm tra lại nếu cần nhân quantity: (price * quantity) không hỗ trợ aggregate trực tiếp, phải raw query hoặc tính JS
+      },
+      where: {
+        product: {
+          is: {
+            sellerId: sellerId, // SỬA: Dùng sellerId
+          },
+        },
+        order: {
+          status: OrderStatus.DELIVERED,
+        },
+      },
+    });
+    
+    // Lưu ý: Prisma aggregate _sum chỉ cộng field. Nếu cần doanh thu chuẩn (price * quantity), 
+    // bạn nên lấy list về rồi reduce hoặc dùng $queryRaw. 
+    // Code dưới đây là cách tính JS an toàn hơn cho doanh thu:
+    const soldItems = await this.prisma.orderItem.findMany({
+      where: {
+          product: { is: { sellerId: sellerId } },
+          order: { status: OrderStatus.DELIVERED }
+      },
+      select: { price: true, quantity: true }
+    });
+    
+    const totalRevenue = soldItems.reduce((acc, item) => {
+        return acc + (Number(item.price) * item.quantity);
+    }, 0);
+
+
+    // 2. Đếm số lượng đơn hàng có chứa sản phẩm của seller này
+    const totalOrders = await this.prisma.order.count({
+      where: {
+        items: {
+          some: {
+            product: {
+              is: {
+                  sellerId: sellerId // SỬA: Dùng sellerId
+              }
+            }
+          }
+        }
+      },
+    });
+
+    // 3. Đếm tổng sản phẩm
+    const totalProducts = await this.prisma.product.count({
+      where: {
+        sellerId: sellerId, // SỬA: Dùng sellerId
+        // isDeleted: false, // Bỏ comment nếu có field này
+      },
+    });
+
+    // 4. Đếm sản phẩm sắp hết hàng
+    const lowStockProducts = await this.prisma.product.count({
+      where: {
+        sellerId: sellerId, // SỬA: Dùng sellerId
+        stock: {
+          lte: 5 
+        }
+      }
+    });
+
+    return {
+      revenue: totalRevenue,
+      totalOrders,
+      totalProducts,
+      lowStockProducts,
+    };
+  }
 }

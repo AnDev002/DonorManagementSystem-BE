@@ -60,10 +60,4 @@ export class OrderController {
   async getSellerOrders(@Request() req, @Query('status') status?: string) {
     return this.orderService.getSellerOrders(req.user.id, status);
   }
-
-  
-  @Patch(':id/cancel')
-  async cancelOrder(@Request() req, @Param('id') id: string) {
-    return this.orderService.cancelOrder(req.user.id, id);
-  }
 }

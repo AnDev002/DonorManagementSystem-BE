@@ -48,7 +48,6 @@ export class ProductWriteService {
     if (tiers && tiers.length > 0 && (!variations || variations.length === 0)) {
        throw new BadRequestException('Phải thiết lập biến thể SKU khi có nhóm phân loại');
     }
-
     // 3. Gộp attributes
     let finalAttributes = attributes;
     try {

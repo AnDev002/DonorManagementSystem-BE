@@ -54,7 +54,7 @@ export class StoreProductController {
   }
 
   @Post('sync-search-index')
-  @Public() // Hoặc bảo vệ bằng Admin Guard
+  // @Public() // Hoặc bảo vệ bằng Admin Guard
   async syncSearchIndex() {
     return this.productReadService.syncAllProductsToRedis();
   }

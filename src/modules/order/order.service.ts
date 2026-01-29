@@ -234,21 +234,32 @@ export class OrderService {
     });
   }
   async getSellerOrders(userId: string, status?: string) {
-    // Tìm shop của user này trước
+    // 1. Tìm shop của user
     const shop = await this.prisma.shop.findUnique({ where: { ownerId: userId } });
-    
+    if (!shop) return []; 
+
+    // [SỬA LỖI] Chuẩn hóa status để bỏ qua trường hợp 'all' hoặc 'ALL' hoặc rỗng
+    const shouldFilterStatus = status && status.toLowerCase() !== 'all';
+
+    // 2. Query Orders
     return this.prisma.order.findMany({
       where: {
         items: {
           some: {
-            product: { shopId: shop?.id }
+            product: { shopId: shop.id } 
           }
         },
-        ...(status && status !== 'ALL' ? { status: status as any } : {})
+        // Chỉ thêm điều kiện status nếu status hợp lệ và không phải là 'all'
+        ...(shouldFilterStatus ? { status: status as any } : {})
       },
       include: {
         user: { select: { name: true, phone: true } },
-        items: { include: { product: true } }
+        items: { 
+          where: {
+             product: { shopId: shop.id } 
+          },
+          include: { product: true } 
+        }
       },
       orderBy: { createdAt: 'desc' }
     });
@@ -524,7 +535,31 @@ export class OrderService {
   async completeOrder(orderId: string) {
       // Logic hoàn thành đơn hàng...
   }
+  async getSellerOrderDetail(orderId: string, sellerId: string) {
+    // 1. Tìm shop của seller
+    const shop = await this.prisma.shop.findUnique({ where: { ownerId: sellerId } });
+    if (!shop) throw new NotFoundException('Shop không tồn tại');
 
+    // 2. Tìm đơn hàng có chứa sản phẩm của shop này
+    const order = await this.prisma.order.findFirst({
+      where: {
+        id: orderId,
+        items: {
+          some: { product: { shopId: shop.id } }
+        }
+      },
+      include: {
+        user: { select: { name: true, phone: true, email: true } },
+        items: {
+          where: { product: { shopId: shop.id } }, // Chỉ lấy các món hàng thuộc shop mình
+          include: { product: true }
+        }
+      }
+    });
+
+    if (!order) throw new NotFoundException('Không tìm thấy đơn hàng hoặc bạn không có quyền truy cập.');
+    return order;
+  }
   async findOne(id: string, userId: string) {
     // 1. Kiểm tra đầu vào
     if (!id || id === 'undefined' || id === 'null') {

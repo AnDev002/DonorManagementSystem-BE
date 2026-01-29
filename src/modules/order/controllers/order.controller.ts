@@ -39,6 +39,13 @@ export class OrderController {
     return this.orderService.getUserOrders(req.user.id, filterStatus);
   }
 
+  @Get('seller')
+  @UseGuards(JwtAuthGuard)
+  async getSellerOrders(@Request() req, @Query('status') status?: string) {
+    return this.orderService.getSellerOrders(req.user.id, status);
+  }
+
+
   @Get(':id')
   async findOne(@Request() req, @Param('id') id: string) {
     return this.orderService.findOne(id, req.user.id);
@@ -54,13 +61,12 @@ export class OrderController {
     return this.orderService.updateOrderStatus(id, req.user.id, status);
   }
 
-  // Endpoint lấy đơn hàng riêng cho seller
-  @Get('seller')
-  @UseGuards(JwtAuthGuard)
-  async getSellerOrders(@Request() req, @Query('status') status?: string) {
-    return this.orderService.getSellerOrders(req.user.id, status);
-  }
 
+  @Get('seller/:id')
+  @UseGuards(JwtAuthGuard)
+  async getSellerOrderDetail(@Param('id') id: string, @Request() req) {
+    return this.orderService.getSellerOrderDetail(id, req.user.id);
+  }
   
   @Patch(':id/cancel')
   async cancelOrder(@Request() req, @Param('id') id: string) {

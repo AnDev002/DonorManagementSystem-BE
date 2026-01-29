@@ -31,7 +31,13 @@ export class OrderController {
       paymentUrl: paymentUrl, // <--- THÊM DÒNG NÀY thì Frontend mới nhận được Link
     };
   }
-
+  
+  @Get()
+  async findAll(@Request() req, @Query('status') status?: string) {
+    const filterStatus = (status === 'all' || !status) ? undefined : status.toUpperCase();
+    return this.orderService.getUserOrders(req.user.id, filterStatus);
+  }
+  
   @Get(':id')
   async findOne(@Request() req, @Param('id') id: string) {
     return this.orderService.findOne(id, req.user.id);

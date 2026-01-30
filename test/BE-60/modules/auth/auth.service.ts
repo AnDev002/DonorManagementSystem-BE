@@ -77,11 +77,6 @@ export class AuthService {
       businessLicenseBack
     } = dto;
 
-    const existingPhone = await this.prisma.user.findFirst({ where: { phone: phoneNumber } });
-    if (existingPhone) {
-        throw new BadRequestException('Số điện thoại đã được sử dụng');
-    }
-
     // 1. Kiểm tra Email
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) throw new BadRequestException('Email đã tồn tại');

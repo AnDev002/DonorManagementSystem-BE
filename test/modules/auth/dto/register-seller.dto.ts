@@ -1,6 +1,6 @@
 // src/modules/auth/dto/register-seller.dto.ts
 import { Transform } from 'class-transformer';
-import { IsEmail, IsNotEmpty, IsString, MinLength, IsOptional, IsEnum, IsNumber, Matches, MaxLength, IsUrl } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, MinLength, IsOptional, IsEnum, IsNumber } from 'class-validator';
 
 export class RegisterSellerDto {
   // --- Thông tin User ---
@@ -9,15 +9,11 @@ export class RegisterSellerDto {
   email: string;
 
   @IsString()
-  @MinLength(8, { message: 'Mật khẩu phải từ 8 ký tự trở lên' })
-  @Matches(/((?=.*\d)|(?=.*\W+))(?![.\n])(?=.*[A-Z])(?=.*[a-z]).*$/, { 
-    message: 'Mật khẩu phải có chữ hoa, chữ thường và số/ký tự đặc biệt' 
-  })
+  @MinLength(6, { message: 'Mật khẩu phải có ít nhất 6 ký tự' })
   password: string;
 
   @IsString()
-  @IsNotEmpty()
-  @MinLength(2, { message: 'Họ tên quá ngắn' })
+  @IsNotEmpty({ message: 'Vui lòng nhập họ tên người đại diện' })
   name: string;
 
   @IsString()
@@ -26,12 +22,7 @@ export class RegisterSellerDto {
 
   // --- Thông tin Shop ---
   @IsString()
-  @IsNotEmpty()
-  @MinLength(5, { message: 'Tên Shop phải từ 5 ký tự trở lên' })
-  @MaxLength(50, { message: 'Tên Shop tối đa 50 ký tự' })
-  @Matches(/^[a-zA-Z0-9\s\u00C0-\u1EF9]+$/, {
-      message: 'Tên Shop không được chứa ký tự đặc biệt'
-  })
+  @IsNotEmpty({ message: 'Tên Shop không được để trống' })
   shopName: string;
 
   @IsString()
@@ -65,16 +56,13 @@ export class RegisterSellerDto {
 
   @IsString()
   @IsOptional()
-  @Matches(/^[0-9]{10}$|^[0-9]{13}$/, {
-      message: 'Mã số thuế/CCCD không hợp lệ'
-  })
   taxCode?: string;
 
-  @IsNotEmpty({ message: 'Ảnh mặt trước là bắt buộc' })
-  @IsUrl({}, { message: 'URL ảnh mặt trước không hợp lệ' })
+  @IsOptional()
+  @IsString()
   businessLicenseFront?: string;
 
-  @IsNotEmpty({ message: 'Ảnh mặt sau là bắt buộc' })
-  @IsUrl({}, { message: 'URL ảnh mặt sau không hợp lệ' })
+  @IsOptional()
+  @IsString()
   businessLicenseBack?: string;
 }

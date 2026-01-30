@@ -128,7 +128,8 @@ model Shop {
   wardCode      String?
   lat           Float?    @default(0)
   lng           Float?    @default(0)
-  
+  categoryId    String?      // ID Ngành hàng chủ lực (để Optional vì shop cũ có thể chưa có)
+  category      Category?    @relation("ShopMainCategory", fields: [categoryId], references: [id])
   status        ShopStatus @default(PENDING)
   banReason     String?
 
@@ -164,6 +165,7 @@ model Shop {
 
   @@index([name])
   @@index([status])
+  @@index([categoryId])
 }
 
 // Ví điểm (Tách riêng để dễ lock row khi giao dịch)
@@ -291,7 +293,7 @@ model Category {
   name  String
   slug  String  @unique
   image String? // Ảnh thumbnail của danh mục
-
+  shops       Shop[]    @relation("ShopMainCategory")
   // Quan hệ đệ quy (Danh mục cha - con)
   // Ví dụ: Thời trang (Parent) -> Áo (Child) -> Áo phông (Child)
   parentId String?

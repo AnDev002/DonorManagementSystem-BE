@@ -35,6 +35,10 @@ export class RegisterSellerDto {
   shopName: string;
 
   @IsString()
+  @IsNotEmpty({ message: 'Vui lòng chọn ngành hàng kinh doanh' })
+  categoryId: string; // Thêm trường này
+
+  @IsString()
   @IsNotEmpty({ message: 'Địa chỉ lấy hàng là bắt buộc' })
   pickupAddress: string;
 
@@ -77,4 +81,5 @@ export class RegisterSellerDto {
   @IsNotEmpty({ message: 'Ảnh mặt sau là bắt buộc' })
   @IsUrl({}, { message: 'URL ảnh mặt sau không hợp lệ' })
   businessLicenseBack?: string;
+  
 }

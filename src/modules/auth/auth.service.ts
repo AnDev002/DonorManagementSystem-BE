@@ -74,7 +74,8 @@ export class AuthService {
       email, password, name, shopName, pickupAddress, phoneNumber,
       provinceId, districtId, wardCode, lat, lng,
       businessLicenseFront, 
-      businessLicenseBack
+      businessLicenseBack,
+      categoryId
     } = dto;
 
     const existingPhone = await this.prisma.user.findFirst({ where: { phone: phoneNumber } });
@@ -110,6 +111,7 @@ export class AuthService {
             data: {
                 ownerId: user.id,
                 name: shopName,
+                categoryId: categoryId,
                 slug: slug,
                 address: pickupAddress,
                 

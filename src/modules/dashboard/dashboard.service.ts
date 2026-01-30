@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma/prisma.service'; // Kiểm tra lại path này nếu cần
 import { OrderStatus, Role } from '@prisma/client'; // Import thêm Role
-import * as moment from 'moment';
+import moment from 'moment';
 @Injectable()
 export class DashboardService {
   constructor(private readonly prisma: PrismaService) {}

@@ -4,9 +4,7 @@ import { PrismaClient, ShopStatus, Role } from '@prisma/client';
 import * as dotenv from 'dotenv';
 import * as bcrypt from 'bcrypt';
 
-// Load biến môi trường
 dotenv.config();
-
 const prisma = new PrismaClient();
 
 function generateSlug(name: string): string {
@@ -19,31 +17,59 @@ function generateSlug(name: string): string {
 }
 
 async function main() {
-  console.log('🚀 Bắt đầu seed 15 tài khoản Seller và Shop (Mode: Upsert)...');
+  console.log('🚀 Bắt đầu seed 15 Seller (Chế độ tự sửa lỗi Conflict)...');
 
   const RAW_PASSWORD = '123456'; 
   const hashedPassword = await bcrypt.hash(RAW_PASSWORD, 10);
   const numberOfSellers = 15;
 
   for (let i = 1; i <= numberOfSellers; i++) {
-    // Lưu ý: Dùng đúng email bạn mong muốn (theo log của bạn là @gmall.com.vn)
-    const email = `mall${i}@gmall.com.vn`; 
+    const email = `mall.0${i}@gmall.com.vn`; // Email mục tiêu
     const sellerName = `Seller ${i}`;
     const username = `seller_user_${i}`;
-    const shopName = `Cửa Hàng Số ${i} Vip`;
+    const shopName = `Cửa Hàng Số ${i}`;
     
-    console.log(`⏳ Đang xử lý: ${sellerName} (${email})...`);
+    console.log(`\n⏳ Đang xử lý: ${sellerName} (${email})...`);
 
     try {
-      // 1. Dùng UPSERT thay vì CREATE cho User
-      // Logic: Tìm theo email. Nếu thấy -> update (giữ nguyên). Nếu chưa -> create.
+      // --- BƯỚC 1: XỬ LÝ XUNG ĐỘT (QUAN TRỌNG) ---
+      
+      // Kiểm tra xem ShopName này đã bị user KHÁC chiếm chưa
+      const conflictShopUser = await prisma.user.findUnique({
+        where: { shopName: shopName }
+      });
+
+      if (conflictShopUser && conflictShopUser.email !== email) {
+        console.log(`   ⚠️  Phát hiện shopName "${shopName}" đang thuộc về user cũ (${conflictShopUser.email}). Đang gỡ bỏ...`);
+        // Gỡ shopName khỏi user cũ để nhường cho user mới
+        await prisma.user.update({
+            where: { id: conflictShopUser.id },
+            data: { shopName: null } 
+        });
+      }
+
+      // Kiểm tra xem Username này đã bị user KHÁC chiếm chưa
+      const conflictUsernameUser = await prisma.user.findUnique({
+        where: { username: username }
+      });
+
+      if (conflictUsernameUser && conflictUsernameUser.email !== email) {
+        console.log(`   ⚠️  Phát hiện username "${username}" đang thuộc về user cũ (${conflictUsernameUser.email}). Đang gỡ bỏ...`);
+        // Gỡ username khỏi user cũ
+        await prisma.user.update({
+            where: { id: conflictUsernameUser.id },
+            data: { username: null }
+        });
+      }
+
+      // --- BƯỚC 2: UPSERT USER ---
       const user = await prisma.user.upsert({
         where: { email: email },
         update: {
-          // Nếu user đã tồn tại, ta update lại role và shopName để đảm bảo đúng dữ liệu
           role: Role.SELLER,
           shopName: shopName,
           isVerified: true,
+          username: username, // Update lại username chuẩn
         },
         create: {
           email: email,
@@ -57,20 +83,19 @@ async function main() {
         },
       });
 
-      // 2. Dùng UPSERT cho Shop
-      // Logic: Tìm theo ownerId.
+      // --- BƯỚC 3: UPSERT SHOP ---
       const shopSlug = generateSlug(shopName);
       
       await prisma.shop.upsert({
         where: { ownerId: user.id },
         update: {
-           // Nếu shop đã có, update lại trạng thái cho chắc chắn
            status: ShopStatus.ACTIVE,
+           // Không update name/slug để tránh đổi URL nếu shop đã chạy
         },
         create: {
           name: shopName,
           slug: shopSlug,
-          description: `Đây là mô tả cho ${shopName}. Chuyên cung cấp các sản phẩm chất lượng cao.`,
+          description: `Shop xịn của ${sellerName}`,
           ownerId: user.id, 
           status: ShopStatus.ACTIVE,
           rating: 5.0,
@@ -81,15 +106,14 @@ async function main() {
         },
       });
 
-      console.log(`   ✅ Xong: User [${user.email}] <-> Shop [${shopName}]`);
+      console.log(`   ✅ Thành công: ${email}`);
 
     } catch (error) {
-      console.error(`   ❌ Lỗi khi xử lý seller thứ ${i}:`, error);
+      console.error(`   ❌ Lỗi không thể xử lý seller thứ ${i}:`, error);
     }
   }
 
-  console.log('\n🎉 HOÀN TẤT QUÁ TRÌNH SEED SELLER!');
-  console.log(`👉 Mật khẩu cho tất cả tài khoản là: ${RAW_PASSWORD}`);
+  console.log('\n🎉 HOÀN TẤT!');
 }
 
 main()

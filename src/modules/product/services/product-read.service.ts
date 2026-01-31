@@ -19,7 +19,6 @@ interface FindAllPublicDto {
   rating?: number;
   sort?: string;
   tag?: string;
-  locations?: string[];
 }
 
 const SUGGESTION_KEY = 'sug:products';

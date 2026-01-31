@@ -452,7 +452,15 @@ export class AdminUsersService {
           },
           // Lấy thông tin Shop cơ bản
           shop: {
-            select: { id: true, name: true, status: true }
+            select: { 
+                id: true, 
+                name: true, 
+                status: true,
+                categoryId: true, // Lấy ID danh mục
+                category: {       // Join sang bảng Category để lấy tên
+                    select: { name: true }
+                }
+            }
           }
         },
       }),
@@ -466,7 +474,7 @@ export class AdminUsersService {
         let dominantCategoryName: string | null = null;
         
         if (u.role === 'SELLER' && u.shop) {
-             // Query nhẹ để lấy Top 1 category của shop này
+             // Cách 1: Ưu tiên lấy từ sản phẩm đang bán nhiều nhất (Logic cũ)
              const topCat = await this.prisma.product.groupBy({
                  by: ['categoryId'],
                  where: { shopId: u.shop.id, status: 'ACTIVE' },
@@ -481,13 +489,17 @@ export class AdminUsersService {
                      select: { name: true }
                  });
                  dominantCategoryName = catInfo?.name || null;
+             } 
+             // [SỬA 2]: Thêm Else - Nếu không có sản phẩm, lấy từ danh mục đăng ký
+             else if (u.shop.category) {
+                 dominantCategoryName = u.shop.category.name;
              }
         }
 
         return {
             ...u,
             pointBalance: u.pointWallet?.balance || 0,
-            dominantIndustry: dominantCategoryName // Trả về tên ngành hàng chuyên
+            dominantIndustry: dominantCategoryName 
         };
     }));
 

@@ -20,7 +20,8 @@ export enum EventType {
   UNBAN_SHOP = 'unban_shop',
   CREATE_USER = 'create_user',
   BAN_USER = 'ban_user',
-  UNBAN_USER = 'unban_user'
+  UNBAN_USER = 'unban_user',
+  DELETE_USER = 'DELETE_USER',
 }
 
 export class TrackEventDto {

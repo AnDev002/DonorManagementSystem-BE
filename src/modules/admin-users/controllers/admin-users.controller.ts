@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Param, Query, UseGuards, Request, Body, Post } from '@nestjs/common';
+import { Controller, Get, Patch, Param, Query, UseGuards, Request, Body, Post, Delete } from '@nestjs/common';
 import { AdminUsersService } from '../admin-users.service';
 import { JwtAuthGuard } from '../../auth/guards/jwt.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -108,4 +108,9 @@ export class AdminUsersController {
   async approveShopUpdate(@Request() req, @Param('shopId') shopId: string) {
       return this.adminUsersService.approveShopUpdate(req.user.id, shopId);
   }
+  
+  @Delete(':id')
+  async deleteUser(@User('userId') adminId: string, @Param('id') userId: string) {
+  return this.adminUsersService.deleteUser(adminId, userId);
+}
 }

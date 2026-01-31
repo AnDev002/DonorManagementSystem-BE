@@ -646,48 +646,76 @@ export class AdminUsersService {
     };
   }
   async deleteUser(adminId: string, userId: string) {
+    // 1. Kiểm tra User và các quan hệ 1-1 quan trọng
     const user = await this.prisma.user.findUnique({ 
         where: { id: userId },
-        include: { shop: true } 
+        include: { 
+            shop: true,
+            pointWallet: true,
+            dailyCheckIn: true,
+            cart: true
+        } 
     });
     
     if (!user) throw new NotFoundException('Người dùng không tồn tại');
     if (user.role === 'ADMIN') throw new BadRequestException('Không thể xóa Admin');
 
+    // 2. Thực hiện xóa toàn bộ dữ liệu liên quan trong một Transaction
     await this.prisma.$transaction(async (tx) => {
-        // 1. Nếu là Seller, xử lý Shop và Sản phẩm
-        if (user.role === 'SELLER' && user.shop) {
-            await tx.product.deleteMany({ where: { shopId: user.shop.id } });
-            await tx.shop.delete({ where: { id: user.shop.id } });
+        
+        // --- NHÓM 1: DỮ LIỆU CỬA HÀNG (Nếu là Seller) ---
+        if (user.shop) {
+            const shopId = user.shop.id;
+            // Xóa sản phẩm -> Biến thể -> FlashSale (Cần xóa theo thứ tự nếu không có cascade)
+            await tx.flashSaleProduct.deleteMany({ where: { productId: { in: (await tx.product.findMany({where: {shopId}, select: {id: true}})).map(p => p.id) } } });
+            await tx.productVariant.deleteMany({ where: { productId: { in: (await tx.product.findMany({where: {shopId}, select: {id: true}})).map(p => p.id) } } });
+            await tx.product.deleteMany({ where: { shopId: shopId } });
+            await tx.shopCategory.deleteMany({ where: { shopId: shopId } });
+            await tx.voucher.deleteMany({ where: { shopId: shopId } });
+            await tx.shop.delete({ where: { id: shopId } });
         }
 
-        // 2. Xóa các dữ liệu phụ trợ liên quan trực tiếp đến userId (Các bảng gây lỗi Foreign Key)
-        // Thêm các bảng này để dọn dẹp sạch sẽ dữ liệu rác
-        await tx.address.deleteMany({ where: { userId: user.id } });
-        await tx.cart.deleteMany({ where: { userId: user.id } });
-        await tx.pointWallet.deleteMany({ where: { userId: user.id } });
-        
-        // Nếu có bảng Order (Đơn hàng), bạn có thể chọn xóa hoặc chuyển userId về null 
-        // tùy thuộc vào việc bạn có muốn giữ lịch sử đơn hàng không. 
-        // Ở đây ta xóa để bạn test sạch email:
-        await tx.order.deleteMany({ where: { userId: user.id } });
-        
-        // Xóa tin nhắn và thông báo
-        if (tx['message']) await tx['message'].deleteMany({ where: { senderId: user.id } });
-        if (tx['notification']) await tx['notification'].deleteMany({ where: { userId: user.id } });
+        // --- NHÓM 2: DỮ LIỆU GIAO DỊCH & TÀI CHÍNH ---
+        await tx.payoutRequest.deleteMany({ where: { userId: userId } });
+        await tx.walletTransaction.deleteMany({ where: { userId: userId } });
+        await tx.pointTransaction.deleteMany({ where: { userId: userId } });
+        await tx.pointHistory.deleteMany({ where: { userId: userId } });
+        if (user.pointWallet) await tx.pointWallet.delete({ where: { userId: userId } });
+        if (user.dailyCheckIn) await tx.dailyCheckIn.delete({ where: { userId: userId } });
 
-        // 3. Cuối cùng mới xóa User
-        await tx.user.delete({
-            where: { id: user.id }
+        // --- NHÓM 3: TƯƠNG TÁC & CÁ NHÂN HÓA ---
+        await tx.address.deleteMany({ where: { userId: userId } });
+        await tx.userVoucher.deleteMany({ where: { userId: userId } });
+        await tx.orderItem.deleteMany({ where: { order: { userId: userId } } }); // Xóa items trước
+        await tx.order.deleteMany({ where: { userId: userId } });
+        
+        // Xóa giỏ hàng
+        await tx.cartItem.deleteMany({ where: { cartId: user.cart?.id } });
+        if (user.cart) await tx.cart.delete({ where: { userId: userId } });
+
+        // --- NHÓM 4: GIAO TIẾP & MẠNG XÃ HỘI ---
+        // Xóa tin nhắn gửi đi
+        await tx.message.deleteMany({ where: { senderId: userId } });
+        // Xóa quan hệ bạn bè (Friendship đã có onDelete: Cascade ở schema nên có thể bỏ qua hoặc xóa tay cho chắc)
+        await tx.friendship.deleteMany({ 
+            where: { OR: [{ senderId: userId }, { receiverId: userId }] } 
         });
+
+        // --- NHÓM 5: NỘI DUNG ---
+        await tx.blogPost.deleteMany({ where: { authorId: userId } });
+        await tx.analyticsLog.deleteMany({ where: { userId: userId } });
+
+        // 3. CUỐI CÙNG: XÓA USER
+        await tx.user.delete({ where: { id: userId } });
     });
 
+    // 4. Tracking
     await this.trackingService.trackEvent(adminId, 'admin-action', {
       type: EventType.DELETE_USER,
       targetId: userId,
-      metadata: { email: user.email }
+      metadata: { email: user.email, action: 'Hard Delete' }
     });
 
-    return { success: true, message: `Đã xóa vĩnh viễn tài khoản ${user.email}` };
+    return { success: true, message: `Hệ thống đã dọn dẹp sạch sẽ dữ liệu của ${user.email}` };
   }
 }

@@ -20,7 +20,6 @@ export class StoreProductController {
     @Query('minPrice') minPrice: number,
     @Query('maxPrice') maxPrice: number,
     @Query('rating') rating: number,
-    @Query('locations') locations: string,
     @Query('sort') sort: string,
     @Query('tag') tag: string,
     @Headers('x-device-id') deviceId: string
@@ -38,11 +37,10 @@ export class StoreProductController {
       page: Number(page), 
       limit: Number(limit), 
       search,
-      categorySlug,
+      categorySlug, // Pass slug xuống service
       minPrice: minPrice ? Number(minPrice) : undefined,
       maxPrice: maxPrice ? Number(maxPrice) : undefined,
       rating: rating ? Number(rating) : undefined,
-      locations: locations ? locations.split(',') : undefined, // [THÊM] Convert sang mảng
       sort,
       tag,
     });

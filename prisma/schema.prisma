@@ -167,7 +167,6 @@ model Shop {
   provinceId    Int?
   districtId    Int?
   wardCode      String?
-  city           String?
   lat           Float?    @default(0)
   lng           Float?    @default(0)
   categoryId    String?      // ID Ngành hàng chủ lực (để Optional vì shop cũ có thể chưa có)
@@ -177,6 +176,7 @@ model Shop {
   banReason     String?
   reviews ShopReview[]
   reviewCount Int @default(0)
+
   // --- Cấu hình giao diện (Shop Decoration) ---
   // Lưu JSON cấu trúc trang trí (Banner slider, Featured Products, Video...)
   decoration    Json?      @default("{}") 

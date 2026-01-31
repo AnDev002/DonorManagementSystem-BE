@@ -12,7 +12,9 @@ export class ReviewService {
     // 1. Kiểm tra đơn hàng
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      include: { items: true },
+      include: { items: {
+          include: { product: true } // 👇 Include thêm Product để lấy shopId
+      } },
     });
 
     if (!order) throw new BadRequestException('Đơn hàng không tồn tại');
@@ -25,9 +27,10 @@ export class ReviewService {
         throw new BadRequestException('Trạng thái đơn hàng chưa thể đánh giá');
     }
 
-    // shopId có thể null trong schema cũ, cần kiểm tra
-    if (!order.shopId) {
-        throw new BadRequestException('Đơn hàng không liên kết với Shop hợp lệ');
+    const shopId = order.shopId || order.items[0]?.product?.shopId;
+
+    if (!shopId) {
+        throw new BadRequestException('Không tìm thấy thông tin Shop của đơn hàng này');
     }
 
     return await this.prisma.$transaction(async (tx) => {
@@ -35,7 +38,7 @@ export class ReviewService {
       await tx.shopReview.create({
         data: {
           userId,
-          shopId: order.shopId!,
+          shopId: shopId,
           orderId,
           rating: shopRating,
           content: shopComment,
@@ -72,14 +75,14 @@ export class ReviewService {
 
       // 4. Tính lại điểm trung bình cho Shop (Realtime)
       const sStats = await tx.shopReview.aggregate({
-        where: { shopId: order.shopId! },
+        where: { shopId: shopId },
         _avg: { rating: true },
         _count: { rating: true },
       });
 
       // Kiểm tra xem model Shop có trường reviewCount không, nếu chưa có trong schema thì bỏ dòng reviewCount đi
       await tx.shop.update({
-          where: { id: order.shopId! },
+          where: { id: shopId },
           data: { 
               rating: sStats._avg.rating || 0,
               reviewCount: sStats._count.rating // Cần đảm bảo đã chạy prisma db push có field này

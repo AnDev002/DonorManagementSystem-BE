@@ -503,9 +503,9 @@ export class AdminUsersService {
   }
 
   async createUser(adminId: string, dto: CreateUserDto) {
-    // 1. Validate cơ bản
+    // 1. Validate cơ bản: Phải có Email hoặc Username
     if (!dto.email && !dto.username) {
-      throw new BadRequestException('Phải cung cấp Email hoặc Username');
+      throw new BadRequestException('Phải cung cấp ít nhất Email hoặc Username');
     }
 
     // 2. Validate riêng cho Seller
@@ -513,57 +513,73 @@ export class AdminUsersService {
         throw new BadRequestException('Vui lòng nhập Tên Cửa Hàng cho tài khoản Người bán');
     }
 
-    // 3. Check trùng lặp User
+    // 3. Check trùng lặp User (Email hoặc Username)
     const existingUser = await this.prisma.user.findFirst({
       where: {
         OR: [
           dto.email ? { email: dto.email } : {},
-          // Nếu có username thì check, ở đây ta tạm dùng email làm base
+          dto.username ? { username: dto.username } : {}
         ]
       }
     });
 
     if (existingUser) {
-      throw new ConflictException('Email đã tồn tại trong hệ thống');
+      throw new ConflictException('Email hoặc Username đã tồn tại trong hệ thống');
     }
 
     // 4. Hash Password
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
-    // 5. Transaction: Tạo User -> (Nếu Seller) Tạo Shop
+    // 5. Chuẩn bị dữ liệu Slug nếu là Seller
+    let shopSlug = '';
+    if (dto.role === 'SELLER' && dto.shopName) {
+        shopSlug = generateSlug(dto.shopName);
+        // Kiểm tra xem Slug này có bị trùng trong bảng Shop không (dù xác suất thấp do có timestamp)
+        const existingShop = await this.prisma.shop.findUnique({
+            where: { slug: shopSlug }
+        });
+        if (existingShop) {
+            // Regenerate lại nếu xui xẻo trùng
+            shopSlug = generateSlug(dto.shopName) + '-' + Math.floor(Math.random() * 100);
+        }
+    }
+
+    // 6. Transaction: Tạo User -> (Nếu Seller) Tạo Shop
     const result = await this.prisma.$transaction(async (prisma) => {
         // A. Tạo User
         const newUser = await prisma.user.create({
             data: {
                 name: dto.name,
-                email: dto.email,
-                username: dto.email.split('@')[0] + Math.floor(Math.random() * 1000), // Auto username
+                email: dto.email || null, // Xử lý trường hợp không gửi email
+                // Logic tạo username tự động nếu không có
+                username: dto.username || (dto.email ? dto.email.split('@')[0] + Math.floor(Math.random() * 1000) : `user${Date.now()}`),
                 password: hashedPassword,
-                role: dto.role || 'BUYER',
+                role: dto.role || Role.BUYER, // Dùng Enum Role chuẩn của Prisma
                 isVerified: true,
-                phone: dto.phone,
-                shopName: dto.role === 'SELLER' ? dto.shopName : null, // Lưu shopName vào user để khớp logic cũ
+                phone: dto.phone || null,
+                
+                // [LƯU Ý] Chỉ thêm dòng này nếu trong schema.prisma bảng User CÓ trường shopName. 
+                // Nếu không thì xóa dòng dưới đi (vì shopName đã lưu ở bảng Shop rồi).
+                shopName: dto.role === 'SELLER' ? dto.shopName : null, 
+
                 cart: { create: {} },
-                pointWallet: { create: { balance: 0 } } // Tạo ví điểm luôn
+                pointWallet: { create: { balance: 0 } }
             }
         });
 
         // B. Nếu là Seller -> Tạo Shop
         if (dto.role === 'SELLER' && dto.shopName) {
-            const shopSlug = generateSlug(dto.shopName);
-            
             await prisma.shop.create({
                 data: {
                     name: dto.shopName,
                     slug: shopSlug,
                     description: `Cửa hàng chính thức của ${dto.name}`,
                     ownerId: newUser.id,
-                    status: ShopStatus.ACTIVE, // Active luôn như yêu cầu
-                    rating: 0, // Mới tạo rating 0
+                    status: ShopStatus.ACTIVE,
+                    rating: 0,
                     totalSales: 0,
-                    // Các trường địa chỉ để null hoặc default, Seller tự cập nhật sau
                     pickupAddress: "Đang cập nhật",
-                    lat: 0,
+                    lat: 0, 
                     lng: 0
                 }
             });
@@ -572,9 +588,9 @@ export class AdminUsersService {
         return newUser;
     });
 
-    // 6. Tracking
+    // 7. Tracking
     await this.trackingService.trackEvent(adminId, 'admin-action', {
-      type: EventType.CREATE_USER,
+      type: EventType.CREATE_USER, // Đảm bảo EventType.CREATE_USER đã tồn tại trong enum
       targetId: result.id,
       metadata: { 
           role: dto.role, 
@@ -583,6 +599,7 @@ export class AdminUsersService {
       }
     });
 
+    // Loại bỏ password trước khi trả về
     const { password, ...userSafe } = result;
     return userSafe;
   }

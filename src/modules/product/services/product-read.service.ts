@@ -36,37 +36,17 @@ export class ProductReadService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    try {
-        const info = await this.redis.call('FT.INFO', INDEX_NAME).catch(() => null);
-
-        if (info) {
-            const infoStr = JSON.stringify(info);
-            // Kiểm tra schema cũ hoặc thiếu field systemTags
-            if (!infoStr.includes('systemTags')) {
-                this.logger.warn('⚠️ Old Index Schema detected. Re-creating index...');
-                // Drop index cũ an toàn (giữ lại documents để sync đè sau)
-                await this.redis.call('FT.DROPINDEX', INDEX_NAME).catch((err) => {
-                    this.logger.error(`Drop Index Error: ${err.message}`);
-                });
-                await this.createSearchIndex();
-            } else {
-                this.logger.log('✅ Index check passed. Ready to search.');
-            }
-        } else {
-            this.logger.warn('⚠️ Index not found. Creating new Index...');
-            await this.createSearchIndex();
-        }
-    } catch (e: any) {
-        this.logger.error(`Init Index Error: ${e.message}`);
-    }
+    // Tự động kiểm tra và tạo lại Index khi khởi động
+    await this.ensureSearchIndex();
   }
 
   // ===========================================================================
-  // [FIX DATA] Làm sạch systemTags (Loại bỏ URL encoded & Ký tự đặc biệt)
+  // [FIX 1] DATA CLEANING - Làm sạch dữ liệu rác từ Crawler
   // ===========================================================================
   private cleanSystemTags(inputTags: any): string {
     let tags: string[] = [];
 
+    // 1. Chuẩn hóa input
     if (Array.isArray(inputTags)) {
         tags = inputTags;
     } else if (typeof inputTags === 'string') {
@@ -83,108 +63,141 @@ export class ProductReadService implements OnModuleInit {
     const cleanedTags = tags
         .map(tag => {
             if (typeof tag !== 'string') return '';
+            
             let clean = tag;
-            // A. Decode URL
+            // A. Decode URL (Bé%20gái -> Bé gái)
             try { clean = decodeURIComponent(clean); } catch {}
-            // B. Xóa Rác URL
+
+            // B. Xóa Rác URL (domain, query params)
             clean = clean.replace(/.*(\?|&)q=/, '').replace(/.*(\?|&)keyword=/, '');
-            // C. Xóa ký tự đặc biệt gây lỗi cú pháp (giữ lại khoảng trắng và dấu -)
+            
+            // C. Xóa ký tự đặc biệt phá vỡ cú pháp TAG của Redis
+            // Chỉ giữ lại: Chữ, Số, Tiếng Việt, Khoảng trắng, Dấu gạch ngang (-)
             clean = clean.replace(/[{}()\[\]|@!<>"`'\\]/g, ' ');
-            // D. Chuẩn hóa
+
+            // D. Chuẩn hóa khoảng trắng
             return clean.trim().replace(/\s+/g, ' ');
         })
-        .filter(t => t.length > 0 && t.length < 50);
+        .filter(t => t.length > 0 && t.length < 50); // Lọc bỏ rác
 
+    // E. Unique Tags
     return Array.from(new Set(cleanedTags)).join(','); 
   }
 
-  // Helper cho trường TEXT (@name) -> Escape \
+  // ===========================================================================
+  // [FIX 2] REDIS HELPERS - Xử lý Query an toàn
+  // ===========================================================================
+  
+  // Helper cho TEXT (@name): Escape ký tự đặc biệt bằng \
   private escapeRediSearchText(str: string): string {
     return str.replace(/([^a-zA-Z0-9\s\u00C0-\u1EF9\-])/g, '\\$1').trim();
   }
 
-  // Helper cho trường TAG (@systemTags) -> KHÔNG Escape \, chỉ xóa ký tự lỗi
+  // Helper cho TAG (@systemTags): KHÔNG dùng \, chỉ thay thế ký tự lỗi
   private sanitizeTagKeyword(str: string): string {
       return str.replace(/[{}\|@*()\\\[\]]/g, ' ').trim().replace(/\s+/g, ' ');
   }
 
+  private async ensureSearchIndex() {
+      try {
+        const info = await this.redis.call('FT.INFO', INDEX_NAME).catch(() => null);
+        
+        // Nếu Index chưa tồn tại hoặc schema cũ -> Tạo mới
+        if (!info) {
+            this.logger.warn('⚠️ Index not found. Creating new Index...');
+            await this.createSearchIndex();
+        } else {
+            const infoStr = JSON.stringify(info);
+            if (!infoStr.includes('systemTags')) {
+                this.logger.warn('⚠️ Old Index Schema detected. Re-creating index...');
+                await this.redis.call('FT.DROPINDEX', INDEX_NAME);
+                await this.createSearchIndex();
+            } else {
+                this.logger.log('✅ Index check passed. Ready to search.');
+            }
+        }
+      } catch (e: any) {
+         this.logger.error(`Ensure Index Error: ${e.message}`);
+      }
+  }
+
   private async createSearchIndex() {
       try {
-        // [FIX INIT ERROR] Bỏ 'SEPARATOR', ',' vì nó là mặc định và có thể gây lỗi cú pháp
         await this.redis.call(
             'FT.CREATE', INDEX_NAME, 
             'ON', 'HASH', 
             'PREFIX', '1', 'product:', 
             'SCHEMA', 
-            'name', 'TEXT', 'WEIGHT', '5.0', 'SORTABLE',
+            'name', 'TEXT', 'WEIGHT', '5.0', 'SORTABLE', 
             'slug', 'TEXT', 'NOSTEM', 
             'price', 'NUMERIC', 'SORTABLE',
             'salesCount', 'NUMERIC', 'SORTABLE',
             'status', 'TAG',
-            'systemTags', 'TAG' 
+            'systemTags', 'TAG' // Mặc định Separator là dấu phẩy
         );
-        this.logger.log('✅ RediSearch Index created successfully');
+        this.logger.log('✅ RediSearch Index created');
         this.logger.log('🔄 Auto-syncing products to Redis...');
         await this.syncAllProductsToRedis();
       } catch (e: any) {
-         if (e.message?.includes('already exists')) {
-             this.logger.log('ℹ️ Index already exists, skipping create.');
-         } else {
-             this.logger.error(`FT.CREATE Failed: ${e.message}`);
-             throw e;
+         if(!e.message?.includes('already exists')) {
+             this.logger.error(`Create Index Error: ${e.message}`);
          }
       }
   }
 
   async syncAllProductsToRedis() {
-    const products = await this.prisma.product.findMany({
-        where: { status: 'ACTIVE' },
-        select: { 
-            id: true, name: true, price: true, salesCount: true, 
-            status: true, slug: true, images: true, originalPrice: true,
-            systemTags: true 
+    try {
+        const products = await this.prisma.product.findMany({
+            where: { status: 'ACTIVE' },
+            select: { 
+                id: true, name: true, price: true, salesCount: true, 
+                status: true, slug: true, images: true, originalPrice: true,
+                systemTags: true 
+            }
+        });
+
+        const pipeline = this.redis.pipeline();
+        await this.redis.del(SUGGESTION_KEY);
+
+        for (const p of products) {
+            const key = `product:${p.id}`;
+            const image = Array.isArray(p.images) && p.images.length > 0 ? (p.images[0] as any) : '';
+
+            // [FIX] Clean Data
+            const tagsString = this.cleanSystemTags(p.systemTags);
+
+            const frontendJson = JSON.stringify({
+                id: p.id,
+                name: p.name,
+                slug: p.slug,
+                price: Number(p.price),
+                originalPrice: Number(p.originalPrice || 0),
+                images: [image],
+                salesCount: p.salesCount || 0,
+            });
+
+            pipeline.hset(key, {
+                name: p.name,
+                price: Number(p.price),
+                salesCount: p.salesCount || 0,
+                status: p.status,
+                id: p.id,
+                slug: p.slug,
+                json: frontendJson,
+                systemTags: tagsString 
+            });
+
+            const score = p.salesCount > 0 ? p.salesCount : 1;
+            const payload = JSON.stringify({ id: p.id, slug: p.slug, price: Number(p.price), image });
+            pipeline.call('FT.SUGADD', SUGGESTION_KEY, p.name, score.toString(), 'PAYLOAD', payload);
         }
-    });
-
-    const pipeline = this.redis.pipeline();
-    await this.redis.del(SUGGESTION_KEY);
-
-    for (const p of products) {
-        const key = `product:${p.id}`;
-        const image = Array.isArray(p.images) && p.images.length > 0 ? (p.images[0] as any) : '';
-
-        // Clean Data trước khi lưu
-        const tagsString = this.cleanSystemTags(p.systemTags);
-
-        const frontendJson = JSON.stringify({
-            id: p.id,
-            name: p.name,
-            slug: p.slug,
-            price: Number(p.price),
-            originalPrice: Number(p.originalPrice || 0),
-            images: [image],
-            salesCount: p.salesCount || 0,
-        });
-
-        pipeline.hset(key, {
-            name: p.name,
-            price: Number(p.price),
-            salesCount: p.salesCount || 0,
-            status: p.status,
-            id: p.id,
-            slug: p.slug,
-            json: frontendJson,
-            systemTags: tagsString 
-        });
-
-        const score = p.salesCount > 0 ? p.salesCount : 1;
-        const payload = JSON.stringify({ id: p.id, slug: p.slug, price: Number(p.price), image });
-        pipeline.call('FT.SUGADD', SUGGESTION_KEY, p.name, score.toString(), 'PAYLOAD', payload);
+        
+        await pipeline.exec();
+        this.logger.log(`Synced ${products.length} products to Redis with CLEANED tags.`);
+        return { count: products.length };
+    } catch (e: any) {
+        this.logger.error(`Sync Error: ${e.message}`);
     }
-    
-    await pipeline.exec();
-    this.logger.log(`Synced ${products.length} products to Redis (Cleaned Data)`);
-    return { count: products.length };
   }
 
   async syncProductToRedis(product: any) {
@@ -218,11 +231,15 @@ export class ProductReadService implements OnModuleInit {
     await this.redis.call('FT.SUGADD', SUGGESTION_KEY, product.name, score.toString(), 'PAYLOAD', payload);
   }
 
+  // ===========================================================================
+  // [FIX 3] SEARCH LOGIC - Fallback thông minh cho dữ liệu bẩn
+  // ===========================================================================
   async findAllPublic(query: FindAllPublicDto) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.max(1, Number(query.limit) || 20);
     const skip = (page - 1) * limit;
 
+    // Logic gợi ý
     const isSuggestionMode = limit <= 10 && !query.categorySlug && !query.minPrice && !query.tag;
     if (isSuggestionMode && query.search && query.search.trim().length >= 2) {
         const suggestions = await this.searchSuggestions(query.search);
@@ -241,20 +258,21 @@ export class ProductReadService implements OnModuleInit {
 
     let resultData: any = null;
 
+    // --- STRATEGY: Redis Search (Ưu tiên) ---
     if ((query.search && query.search.trim().length > 0) || query.tag) {
         try {
             let ftQuery = `@status:{ACTIVE}`;
             const conditions: string[] = [];
 
             if (query.search && query.search.trim().length > 0) {
-                // Name (TEXT): Escape kỹ
+                // 1. TEXT Search
                 const cleanName = this.escapeRediSearchText(query.search);
                 if (cleanName) {
                     const nameTokens = cleanName.split(/\s+/).map(t => `${t}*`).join(' ');
                     conditions.push(`@name:(${nameTokens})`);
                 }
 
-                // Tags (TAG): Sanitize thường, query dạng @systemTags:{val}
+                // 2. TAG Search
                 const cleanTagKw = this.sanitizeTagKeyword(query.search);
                 if (cleanTagKw) {
                     conditions.push(`@systemTags:{${cleanTagKw}}`);
@@ -273,6 +291,7 @@ export class ProductReadService implements OnModuleInit {
             }
             
             if (conditions.length > 0 || query.tag) {
+                // this.logger.debug(`FT.SEARCH Query: ${ftQuery}`); // Uncomment to debug
                 const searchRes: any = await this.redis.call(
                     'FT.SEARCH', INDEX_NAME, 
                     ftQuery,
@@ -298,11 +317,13 @@ export class ProductReadService implements OnModuleInit {
                 }
             }
         } catch (e: any) {
-            this.logger.error(`RediSearch Query Error: ${e.message} | Query: ${query.search}`);
+            this.logger.error(`RediSearch Error: ${e.message}`);
         }
     }
 
+    // --- DB FALLBACK (Tìm trong MySQL nếu Redis miss) ---
     if (!resultData) {
+        // this.logger.warn('⚠️ Falling back to DB Search'); 
         const where: Prisma.ProductWhereInput = {
             status: 'ACTIVE',
             ...(query.categorySlug ? { category: { slug: query.categorySlug } } : {}),
@@ -312,9 +333,15 @@ export class ProductReadService implements OnModuleInit {
         };
 
         if (query.search) {
+             const searchClean = query.search.trim();
+             // [QUAN TRỌNG] Tạo phiên bản URL Encoded để tìm khớp với dữ liệu bẩn trong DB
+             // Ví dụ: "Bé gái" -> "B%C3%A9%20g%C3%A1i"
+             const searchEncoded = encodeURIComponent(searchClean);
+
              where.OR = [
-                { name: { contains: query.search.trim() } },
-                { systemTags: { string_contains: query.search.trim() } }
+                { name: { contains: searchClean } },
+                { systemTags: { string_contains: searchClean } }, // Tìm text thường
+                { systemTags: { string_contains: searchEncoded } } // Tìm text mã hóa (cho dữ liệu bẩn)
              ];
         }
         
@@ -355,6 +382,7 @@ export class ProductReadService implements OnModuleInit {
         };
     }
 
+    // Cache kết quả DB (ngắn hạn)
     if (resultData?.data?.length > 0 && !query.search) {
         await this.redis.set(cacheKey, JSON.stringify(resultData), 'EX', 60);
     }
@@ -362,7 +390,10 @@ export class ProductReadService implements OnModuleInit {
     return resultData;
   }
 
-  // ... (Giữ nguyên các hàm findOnePublic, searchSuggestions, findRelated, findMoreFromShop, v.v...)
+  // ===========================================================================
+  // Các hàm phụ trợ giữ nguyên
+  // ===========================================================================
+
   async searchSuggestions(keyword: string) {
     if (!keyword || keyword.length < 2) return [];
     try {

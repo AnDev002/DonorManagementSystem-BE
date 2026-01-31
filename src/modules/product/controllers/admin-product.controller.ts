@@ -83,13 +83,22 @@ export class AdminProductController {
        }
    };
 }
-
   @Patch('bulk-approval')
   @Roles(Role.ADMIN)
   async bulkApprove(
     @Body() body: { ids: string[], status: 'ACTIVE' | 'REJECTED', reason?: string }
   ) {
     return this.productWriteService.bulkApproveProducts(body.ids, body.status, body.reason);
+  }
+
+  @Patch(':id/system-tags')
+  @Roles(Role.ADMIN)
+  async updateSystemTags(
+  @Param('id') id: string,
+  @Body() body: { systemTags: string[] }
+  ) {
+    // Bây giờ hàm này đã tồn tại, lỗi sẽ biến mất
+    return this.productWriteService.updateProductTags(id, body.systemTags);
   }
 
   // 2. API Duyệt / Từ chối

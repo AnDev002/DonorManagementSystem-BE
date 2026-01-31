@@ -158,6 +158,31 @@ export class ProductWriteService {
     });
   }
 
+  async updateProductTags(id: string, systemTags: string[]) {
+    // 1. Kiểm tra sản phẩm có tồn tại không
+    const product = await this.prisma.product.findUnique({ where: { id } });
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    // 2. Cập nhật DB
+    const updatedProduct = await this.prisma.product.update({
+      where: { id },
+      data: { systemTags },
+      // Include các quan hệ cần thiết để hàm syncRedis không bị lỗi thiếu data
+      include: {
+        shop: { select: { id: true, name: true, avatar: true } }, 
+        category: true
+      }
+    });
+
+    // 3. Sync lại dữ liệu sang Redis (để Search tìm thấy tag mới ngay lập tức)
+    // Lưu ý: Hàm syncProductToRedis bên ReadService cần object product đầy đủ thông tin
+    await this.productReadService.syncProductToRedis(updatedProduct);
+
+    return updatedProduct;
+  }
+
   // --- 2. Approve (Giữ nguyên) ---
   async approveProduct(productId: string, status: 'ACTIVE' | 'REJECTED', reason?: string) {
     const updatedProduct = await this.prisma.product.update({

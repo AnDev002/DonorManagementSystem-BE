@@ -420,7 +420,7 @@ model Product {
 
   reviews ProductReview[]
   reviewCount Int @default(0)
-
+  systemTags    String[] @default([])
   // Hình ảnh (Lưu mảng JSON URL ảnh)
   images Json
   status ProductStatus @default(PENDING) // Mặc định tạo xong là chờ duyệt ngay

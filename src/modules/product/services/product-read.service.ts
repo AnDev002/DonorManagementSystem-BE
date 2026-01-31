@@ -268,16 +268,22 @@ export class ProductReadService implements OnModuleInit {
         try {
             let ftQuery = `@status:{ACTIVE}`;
 
-            // Search Keyword
+            // [FIX] Xử lý Search Keyword: Tìm trong Name HOẶC SystemTags
             if (query.search && query.search.trim().length > 0) {
                 const cleanKeyword = this.escapeRediSearch(query.search);
                 if (cleanKeyword) {
                     const terms = cleanKeyword.split(/\s+/).filter(t => t.length > 0).map(t => `${t}*`).join(' ');
-                    ftQuery += ` @name:(${terms})`;
+                    
+                    // CŨ: Chỉ tìm trong tên
+                    // ftQuery += ` @name:(${terms})`;
+
+                    // MỚI: Tìm trong Tên (Fuzzy) HOẶC SystemTags (Chính xác)
+                    // Cú pháp: (@field1:val1 | @field2:val2)
+                    ftQuery += ` (@name:(${terms}) | @systemTags:{${cleanKeyword}})`;
                 }
             }
 
-            // Filter Tag (Redis TAG field vẫn hoạt động bình thường với chuỗi tagsString)
+            // Xử lý Filter Tag (nếu URL có ?tag=...)
             if (query.tag) {
                 const cleanTag = this.escapeRediSearch(query.tag);
                 if (cleanTag) {

@@ -87,7 +87,7 @@ export class ProductReadService implements OnModuleInit {
             'price', 'NUMERIC', 'SORTABLE',
             'salesCount', 'NUMERIC', 'SORTABLE',
             'status', 'TAG',
-            'systemTags', 'TAG', 'SEPARATOR', ',' // Field quan trọng
+            'systemTags', 'TAG' // Field quan trọng
         );
         this.logger.log('✅ RediSearch Index created');
         this.logger.log('🔄 Auto-syncing products to Redis...');
@@ -210,10 +210,6 @@ export class ProductReadService implements OnModuleInit {
     // [FIX] Ép kiểu từ JsonValue sang string[] an toàn
     const tags = Array.isArray(product.systemTags) ? (product.systemTags as string[]) : [];
     const tagsString = tags.join(',');
-
-    this.logger.log(`🔍 [Sync Debug] Product: ${product.id} | Name: ${product.name}`);
-    this.logger.log(`   👉 Raw Tags (DB): ${JSON.stringify(product.systemTags)}`);
-    this.logger.log(`   👉 Redis Tag String: "${tagsString}"`); // Phải thấy dạng: "Valentine,Quà Tặng,Nam"
 
     // Tạo cục JSON
     const frontendJson = JSON.stringify({
@@ -338,8 +334,6 @@ export class ProductReadService implements OnModuleInit {
             const isValidSearch = query.search || query.tag;
 
             if (isValidSearch) {
-                this.logger.warn(`🚀 [Search Debug] Input: "${query.search}"`);
-                this.logger.warn(`   👉 FT.QUERY: ${ftQuery}`);
                 const searchRes: any = await this.redis.call(
                     'FT.SEARCH', INDEX_NAME, 
                     ftQuery,
@@ -347,8 +341,6 @@ export class ProductReadService implements OnModuleInit {
                     'SORTBY', 'salesCount', 'DESC', 
                     'RETURN', '1', 'json' 
                 );
-
-                this.logger.warn(`   👉 Result Count: ${searchRes[0]}`);
 
                 const total = searchRes[0];
                 

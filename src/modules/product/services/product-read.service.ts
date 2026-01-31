@@ -41,10 +41,13 @@ export class ProductReadService implements OnModuleInit {
 
         if (info) {
             const infoStr = JSON.stringify(info);
-            // Kiểm tra schema, nếu thiếu field systemTags hoặc cấu trúc cũ thì tạo lại
+            // Kiểm tra schema cũ hoặc thiếu field systemTags
             if (!infoStr.includes('systemTags')) {
                 this.logger.warn('⚠️ Old Index Schema detected. Re-creating index...');
-                await this.redis.call('FT.DROPINDEX', INDEX_NAME);
+                // Drop index cũ an toàn (giữ lại documents để sync đè sau)
+                await this.redis.call('FT.DROPINDEX', INDEX_NAME).catch((err) => {
+                    this.logger.error(`Drop Index Error: ${err.message}`);
+                });
                 await this.createSearchIndex();
             } else {
                 this.logger.log('✅ Index check passed. Ready to search.');
@@ -59,12 +62,11 @@ export class ProductReadService implements OnModuleInit {
   }
 
   // ===========================================================================
-  // [FIX 1] DATA CLEANING - Hàm làm sạch SystemTags trước khi lưu vào Redis
+  // [FIX DATA] Làm sạch systemTags (Loại bỏ URL encoded & Ký tự đặc biệt)
   // ===========================================================================
   private cleanSystemTags(inputTags: any): string {
     let tags: string[] = [];
 
-    // 1. Chuẩn hóa đầu vào (String JSON, String mảng, hoặc Array)
     if (Array.isArray(inputTags)) {
         tags = inputTags;
     } else if (typeof inputTags === 'string') {
@@ -81,49 +83,34 @@ export class ProductReadService implements OnModuleInit {
     const cleanedTags = tags
         .map(tag => {
             if (typeof tag !== 'string') return '';
-            
             let clean = tag;
-
-            // A. Decode URL (Bé%20gái -> Bé gái)
+            // A. Decode URL
             try { clean = decodeURIComponent(clean); } catch {}
-
-            // B. Xóa Rác URL do Crawler nhầm lẫn (Aggressive Strip)
-            // Loại bỏ: /search?q=..., ?keyword=... 
+            // B. Xóa Rác URL
             clean = clean.replace(/.*(\?|&)q=/, '').replace(/.*(\?|&)keyword=/, '');
-            
-            // C. Xóa các ký tự đặc biệt phá vỡ cú pháp TAG của Redis
-            // Loại bỏ: { } [ ] ( ) | @ ! < > " ' ` \
-            // Giữ lại: Chữ, Số, Tiếng Việt, Khoảng trắng, Gạch ngang (-) cho độ tuổi
+            // C. Xóa ký tự đặc biệt gây lỗi cú pháp (giữ lại khoảng trắng và dấu -)
             clean = clean.replace(/[{}()\[\]|@!<>"`'\\]/g, ' ');
-
-            // D. Chuẩn hóa khoảng trắng (nhiều space -> 1 space)
+            // D. Chuẩn hóa
             return clean.trim().replace(/\s+/g, ' ');
         })
-        .filter(t => t.length > 0 && t.length < 50); // Lọc bỏ tag rỗng hoặc quá dài
+        .filter(t => t.length > 0 && t.length < 50);
 
-    // E. Loại bỏ trùng lặp
     return Array.from(new Set(cleanedTags)).join(','); 
   }
 
-  // ===========================================================================
-  // [FIX 2] REDIS QUERY HELPERS - Tách biệt logic xử lý TEXT và TAG
-  // ===========================================================================
-  
-  // Helper cho trường TEXT (@name): Cần escape các ký tự đặc biệt bằng \
-  // Ví dụ: "Áo - Quần" -> "Áo \- Quần"
+  // Helper cho trường TEXT (@name) -> Escape \
   private escapeRediSearchText(str: string): string {
     return str.replace(/([^a-zA-Z0-9\s\u00C0-\u1EF9\-])/g, '\\$1').trim();
   }
 
-  // Helper cho trường TAG (@systemTags): KHÔNG dùng \, chỉ xóa ký tự gây lỗi {}
-  // Ví dụ: "1-3 tuổi" -> Giữ nguyên "1-3 tuổi" (không escape dấu -)
+  // Helper cho trường TAG (@systemTags) -> KHÔNG Escape \, chỉ xóa ký tự lỗi
   private sanitizeTagKeyword(str: string): string {
-      // Chỉ giữ lại ký tự an toàn, thay thế ký tự đặc biệt { } | @ * ( ) bằng khoảng trắng
       return str.replace(/[{}\|@*()\\\[\]]/g, ' ').trim().replace(/\s+/g, ' ');
   }
 
   private async createSearchIndex() {
       try {
+        // [FIX INIT ERROR] Bỏ 'SEPARATOR', ',' vì nó là mặc định và có thể gây lỗi cú pháp
         await this.redis.call(
             'FT.CREATE', INDEX_NAME, 
             'ON', 'HASH', 
@@ -134,19 +121,21 @@ export class ProductReadService implements OnModuleInit {
             'price', 'NUMERIC', 'SORTABLE',
             'salesCount', 'NUMERIC', 'SORTABLE',
             'status', 'TAG',
-            'systemTags', 'TAG', 'SEPARATOR', ',' // Index dạng TAG
+            'systemTags', 'TAG' 
         );
-        this.logger.log('✅ RediSearch Index created');
+        this.logger.log('✅ RediSearch Index created successfully');
         this.logger.log('🔄 Auto-syncing products to Redis...');
         await this.syncAllProductsToRedis();
-      } catch (e) {
-         // Index already exists
+      } catch (e: any) {
+         if (e.message?.includes('already exists')) {
+             this.logger.log('ℹ️ Index already exists, skipping create.');
+         } else {
+             this.logger.error(`FT.CREATE Failed: ${e.message}`);
+             throw e;
+         }
       }
   }
 
-  // ===========================================================================
-  // [FIX 3] SYNC LOGIC - Áp dụng cleanSystemTags khi Sync
-  // ===========================================================================
   async syncAllProductsToRedis() {
     const products = await this.prisma.product.findMany({
         where: { status: 'ACTIVE' },
@@ -164,7 +153,7 @@ export class ProductReadService implements OnModuleInit {
         const key = `product:${p.id}`;
         const image = Array.isArray(p.images) && p.images.length > 0 ? (p.images[0] as any) : '';
 
-        // FIX: Clean Data trước khi HSET
+        // Clean Data trước khi lưu
         const tagsString = this.cleanSystemTags(p.systemTags);
 
         const frontendJson = JSON.stringify({
@@ -185,7 +174,7 @@ export class ProductReadService implements OnModuleInit {
             id: p.id,
             slug: p.slug,
             json: frontendJson,
-            systemTags: tagsString // Lưu tag sạch
+            systemTags: tagsString 
         });
 
         const score = p.salesCount > 0 ? p.salesCount : 1;
@@ -201,8 +190,6 @@ export class ProductReadService implements OnModuleInit {
   async syncProductToRedis(product: any) {
     const key = `product:${product.id}`;
     const image = Array.isArray(product.images) && product.images.length > 0 ? (product.images[0] as any) : '';
-
-    // FIX: Clean Data Single Product
     const tagsString = this.cleanSystemTags(product.systemTags);
 
     const frontendJson = JSON.stringify({
@@ -231,9 +218,6 @@ export class ProductReadService implements OnModuleInit {
     await this.redis.call('FT.SUGADD', SUGGESTION_KEY, product.name, score.toString(), 'PAYLOAD', payload);
   }
 
-  // ===========================================================================
-  // [FIX 4] SEARCH LOGIC - Query Builder đúng chuẩn
-  // ===========================================================================
   async findAllPublic(query: FindAllPublicDto) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.max(1, Number(query.limit) || 20);
@@ -257,22 +241,20 @@ export class ProductReadService implements OnModuleInit {
 
     let resultData: any = null;
 
-    // --- REDIS SEARCH ---
     if ((query.search && query.search.trim().length > 0) || query.tag) {
         try {
             let ftQuery = `@status:{ACTIVE}`;
             const conditions: string[] = [];
 
             if (query.search && query.search.trim().length > 0) {
-                // 1. TEXT Search (@name): Dùng escapeRediSearchText (Có escape \)
+                // Name (TEXT): Escape kỹ
                 const cleanName = this.escapeRediSearchText(query.search);
                 if (cleanName) {
                     const nameTokens = cleanName.split(/\s+/).map(t => `${t}*`).join(' ');
                     conditions.push(`@name:(${nameTokens})`);
                 }
 
-                // 2. TAG Search (@systemTags): Dùng sanitizeTagKeyword (KHÔNG escape \)
-                // Query đúng: @systemTags:{1-3} | Query sai: @systemTags:{\(1\-3}
+                // Tags (TAG): Sanitize thường, query dạng @systemTags:{val}
                 const cleanTagKw = this.sanitizeTagKeyword(query.search);
                 if (cleanTagKw) {
                     conditions.push(`@systemTags:{${cleanTagKw}}`);
@@ -320,7 +302,6 @@ export class ProductReadService implements OnModuleInit {
         }
     }
 
-    // --- DB FALLBACK ---
     if (!resultData) {
         const where: Prisma.ProductWhereInput = {
             status: 'ACTIVE',
@@ -381,7 +362,7 @@ export class ProductReadService implements OnModuleInit {
     return resultData;
   }
 
-  // ... Các hàm findOnePublic, findRelated, findMoreFromShop, findBoughtTogether giữ nguyên ...
+  // ... (Giữ nguyên các hàm findOnePublic, searchSuggestions, findRelated, findMoreFromShop, v.v...)
   async searchSuggestions(keyword: string) {
     if (!keyword || keyword.length < 2) return [];
     try {

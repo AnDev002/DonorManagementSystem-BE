@@ -75,6 +75,32 @@ export class ProductReadService implements OnModuleInit {
     }
   }
 
+  // Thêm hàm này vào trong class để tái sử dụng
+private cleanSystemTags(tags: string[] | any): string {
+    if (!Array.isArray(tags)) return '';
+
+    const cleanedTags = tags
+        .map(tag => {
+            if (typeof tag !== 'string') return '';
+            
+            // 1. Decode URL (Biến %20 thành dấu cách, %C3%A9 thành é...)
+            let clean = decodeURIComponent(tag);
+
+            // 2. Xóa prefix rác "/search?q=" nếu có
+            clean = clean.replace('/search?q=', '').replace('/search?keyword=', '');
+
+            // 3. Xóa các ký tự đặc biệt có thể gây lỗi cú pháp Search (ngoặc đơn, dấu +...)
+            // Chỉ giữ lại chữ cái, số, dấu cách và tiếng Việt
+            clean = clean.replace(/[()]/g, ''); 
+
+            return clean.trim();
+        })
+        .filter(t => t.length > 0); // Loại bỏ tag rỗng
+
+    // Nối lại bằng dấu phẩy
+    return cleanedTags.join(',');
+  }
+
   private async createSearchIndex() {
       try {
         await this.redis.call(
@@ -122,7 +148,11 @@ export class ProductReadService implements OnModuleInit {
 
         // [FIX] Ép kiểu từ JsonValue sang string[] an toàn
         const tags = Array.isArray(p.systemTags) ? (p.systemTags as string[]) : [];
-        const tagsString = tags.join(',');
+        const tagsString = this.cleanSystemTags(p.systemTags);
+
+        if (p.id === '5a8d979e-c9f6-4d34-8e5b-9b961d8ad2b0') {
+             this.logger.log(`🛠️ Cleaned Tags for debug product: ${tagsString}`);
+        }
 
         // Tạo sẵn cục JSON cho Frontend
         const frontendJson = JSON.stringify({
@@ -209,7 +239,7 @@ export class ProductReadService implements OnModuleInit {
 
     // [FIX] Ép kiểu từ JsonValue sang string[] an toàn
     const tags = Array.isArray(product.systemTags) ? (product.systemTags as string[]) : [];
-    const tagsString = tags.join(',');
+    const tagsString = this.cleanSystemTags(product.systemTags);
 
     this.logger.log(`🔍 [Sync Debug] Product: ${product.id} | Name: ${product.name}`);
     this.logger.log(`   👉 Raw Tags (DB): ${JSON.stringify(product.systemTags)}`);

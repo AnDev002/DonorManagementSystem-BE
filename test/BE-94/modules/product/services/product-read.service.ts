@@ -40,8 +40,9 @@ export class ProductReadService implements OnModuleInit {
         const info = await this.redis.call('FT.INFO', INDEX_NAME).catch(() => null);
 
         if (info) {
+             // Force re-sync if needed logic here check
             const infoStr = JSON.stringify(info);
-            // Kiểm tra schema, nếu thiếu field systemTags hoặc cấu trúc cũ thì tạo lại
+            // Kiểm tra xem schema có đúng chưa, nếu chưa thì drop đi tạo lại
             if (!infoStr.includes('systemTags')) {
                 this.logger.warn('⚠️ Old Index Schema detected. Re-creating index...');
                 await this.redis.call('FT.DROPINDEX', INDEX_NAME);
@@ -59,15 +60,16 @@ export class ProductReadService implements OnModuleInit {
   }
 
   // ===========================================================================
-  // [FIX 1] DATA CLEANING - Hàm làm sạch SystemTags trước khi lưu vào Redis
+  // [FIX 1] DATA CLEANING - Xử lý dữ liệu rác từ Crawler & URL Encoded
   // ===========================================================================
   private cleanSystemTags(inputTags: any): string {
     let tags: string[] = [];
 
-    // 1. Chuẩn hóa đầu vào (String JSON, String mảng, hoặc Array)
+    // 1. Handle Input Variations (String, JSON Array, etc.)
     if (Array.isArray(inputTags)) {
         tags = inputTags;
     } else if (typeof inputTags === 'string') {
+        // Trường hợp lưu dưới dạng string "tag1, tag2" hoặc JSON string
         try {
             const parsed = JSON.parse(inputTags);
             if (Array.isArray(parsed)) tags = parsed;
@@ -87,38 +89,38 @@ export class ProductReadService implements OnModuleInit {
             // A. Decode URL (Bé%20gái -> Bé gái)
             try { clean = decodeURIComponent(clean); } catch {}
 
-            // B. Xóa Rác URL do Crawler nhầm lẫn (Aggressive Strip)
-            // Loại bỏ: /search?q=..., ?keyword=... 
+            // B. Xóa Rác URL mạnh tay (Aggressive URL Strip)
+            // Loại bỏ tất cả phần domain và query params trước keyword chính
+            // Ví dụ: "https://shopee.vn/search?keyword=Áo thun" -> "Áo thun"
             clean = clean.replace(/.*(\?|&)q=/, '').replace(/.*(\?|&)keyword=/, '');
             
-            // C. Xóa các ký tự đặc biệt phá vỡ cú pháp TAG của Redis
+            // C. Xóa các ký tự đặc biệt phá vỡ cú pháp Redis TAG
+            // Giữ lại: Chữ, Số, Tiếng Việt, Khoảng trắng, Dấu gạch ngang (-) cho range
             // Loại bỏ: { } [ ] ( ) | @ ! < > " ' ` \
-            // Giữ lại: Chữ, Số, Tiếng Việt, Khoảng trắng, Gạch ngang (-) cho độ tuổi
             clean = clean.replace(/[{}()\[\]|@!<>"`'\\]/g, ' ');
 
-            // D. Chuẩn hóa khoảng trắng (nhiều space -> 1 space)
+            // D. Chuẩn hóa khoảng trắng
             return clean.trim().replace(/\s+/g, ' ');
         })
-        .filter(t => t.length > 0 && t.length < 50); // Lọc bỏ tag rỗng hoặc quá dài
+        .filter(t => t.length > 0 && t.length < 50); // Bỏ tag rỗng hoặc quá dài (rác)
 
-    // E. Loại bỏ trùng lặp
+    // E. Unique Tags
     return Array.from(new Set(cleanedTags)).join(','); 
   }
 
   // ===========================================================================
-  // [FIX 2] REDIS QUERY HELPERS - Tách biệt logic xử lý TEXT và TAG
+  // [FIX 2] REDIS HELPERS - Tách biệt logic xử lý Text và Tag
   // ===========================================================================
   
-  // Helper cho trường TEXT (@name): Cần escape các ký tự đặc biệt bằng \
-  // Ví dụ: "Áo - Quần" -> "Áo \- Quần"
+  // Helper cho trường TEXT (Name) -> Cần escape các ký tự đặc biệt bằng \
   private escapeRediSearchText(str: string): string {
     return str.replace(/([^a-zA-Z0-9\s\u00C0-\u1EF9\-])/g, '\\$1').trim();
   }
 
-  // Helper cho trường TAG (@systemTags): KHÔNG dùng \, chỉ xóa ký tự gây lỗi {}
-  // Ví dụ: "1-3 tuổi" -> Giữ nguyên "1-3 tuổi" (không escape dấu -)
+  // Helper cho trường TAG -> KHÔNG dùng \, chỉ loại bỏ ký tự gây lỗi cú pháp {}
   private sanitizeTagKeyword(str: string): string {
-      // Chỉ giữ lại ký tự an toàn, thay thế ký tự đặc biệt { } | @ * ( ) bằng khoảng trắng
+      // Chỉ giữ lại ký tự an toàn, thay thế ký tự đặc biệt bằng khoảng trắng
+      // Redis TAG query: @field:{ value } -> value không được chứa { } |
       return str.replace(/[{}\|@*()\\\[\]]/g, ' ').trim().replace(/\s+/g, ' ');
   }
 
@@ -129,24 +131,21 @@ export class ProductReadService implements OnModuleInit {
             'ON', 'HASH', 
             'PREFIX', '1', 'product:', 
             'SCHEMA', 
-            'name', 'TEXT', 'WEIGHT', '5.0', 'SORTABLE',
+            'name', 'TEXT', 'WEIGHT', '5.0', 'SORTABLE', // Tìm kiếm mờ, trọng số cao
             'slug', 'TEXT', 'NOSTEM', 
             'price', 'NUMERIC', 'SORTABLE',
             'salesCount', 'NUMERIC', 'SORTABLE',
             'status', 'TAG',
-            'systemTags', 'TAG', 'SEPARATOR', ',' // Index dạng TAG
+            'systemTags', 'TAG', 'SEPARATOR', ',' // Quan trọng: TAG separator
         );
         this.logger.log('✅ RediSearch Index created');
         this.logger.log('🔄 Auto-syncing products to Redis...');
         await this.syncAllProductsToRedis();
       } catch (e) {
-         // Index already exists
+         // Index already exists, ignore
       }
   }
 
-  // ===========================================================================
-  // [FIX 3] SYNC LOGIC - Áp dụng cleanSystemTags khi Sync
-  // ===========================================================================
   async syncAllProductsToRedis() {
     const products = await this.prisma.product.findMany({
         where: { status: 'ACTIVE' },
@@ -158,13 +157,14 @@ export class ProductReadService implements OnModuleInit {
     });
 
     const pipeline = this.redis.pipeline();
+    // Reset suggestions
     await this.redis.del(SUGGESTION_KEY);
 
     for (const p of products) {
         const key = `product:${p.id}`;
         const image = Array.isArray(p.images) && p.images.length > 0 ? (p.images[0] as any) : '';
 
-        // FIX: Clean Data trước khi HSET
+        // [APPLY FIX] Clean Data trước khi lưu
         const tagsString = this.cleanSystemTags(p.systemTags);
 
         const frontendJson = JSON.stringify({
@@ -177,6 +177,7 @@ export class ProductReadService implements OnModuleInit {
             salesCount: p.salesCount || 0,
         });
 
+        // HSET dữ liệu đã sạch vào Redis
         pipeline.hset(key, {
             name: p.name,
             price: Number(p.price),
@@ -185,9 +186,10 @@ export class ProductReadService implements OnModuleInit {
             id: p.id,
             slug: p.slug,
             json: frontendJson,
-            systemTags: tagsString // Lưu tag sạch
+            systemTags: tagsString 
         });
 
+        // Add to Autocomplete Dictionary
         const score = p.salesCount > 0 ? p.salesCount : 1;
         const payload = JSON.stringify({ id: p.id, slug: p.slug, price: Number(p.price), image });
         pipeline.call('FT.SUGADD', SUGGESTION_KEY, p.name, score.toString(), 'PAYLOAD', payload);
@@ -202,7 +204,7 @@ export class ProductReadService implements OnModuleInit {
     const key = `product:${product.id}`;
     const image = Array.isArray(product.images) && product.images.length > 0 ? (product.images[0] as any) : '';
 
-    // FIX: Clean Data Single Product
+    // [APPLY FIX] Clean tags single product
     const tagsString = this.cleanSystemTags(product.systemTags);
 
     const frontendJson = JSON.stringify({
@@ -232,13 +234,14 @@ export class ProductReadService implements OnModuleInit {
   }
 
   // ===========================================================================
-  // [FIX 4] SEARCH LOGIC - Query Builder đúng chuẩn
+  // [FIX 3] SEARCH LOGIC - Query Builder chuẩn
   // ===========================================================================
   async findAllPublic(query: FindAllPublicDto) {
     const page = Math.max(1, Number(query.page) || 1);
     const limit = Math.max(1, Number(query.limit) || 20);
     const skip = (page - 1) * limit;
 
+    // Logic gợi ý (giữ nguyên)
     const isSuggestionMode = limit <= 10 && !query.categorySlug && !query.minPrice && !query.tag;
     if (isSuggestionMode && query.search && query.search.trim().length >= 2) {
         const suggestions = await this.searchSuggestions(query.search);
@@ -250,6 +253,7 @@ export class ProductReadService implements OnModuleInit {
     const queryHash = createHash('md5').update(JSON.stringify(query)).digest('hex');
     const cacheKey = `search:res:${queryHash}`;
 
+    // Chỉ cache nếu không phải search text (vì search text biến thiên quá nhiều)
     if ((!query.search || query.search.length < 2) && !query.tag) {
         const cached = await this.redis.get(cacheKey);
         if (cached) return JSON.parse(cached);
@@ -257,28 +261,40 @@ export class ProductReadService implements OnModuleInit {
 
     let resultData: any = null;
 
-    // --- REDIS SEARCH ---
+    // --- STRATEGY: Ưu tiên Redis Search ---
     if ((query.search && query.search.trim().length > 0) || query.tag) {
         try {
+            // Base filter: Chỉ lấy hàng Active
             let ftQuery = `@status:{ACTIVE}`;
             const conditions: string[] = [];
 
             if (query.search && query.search.trim().length > 0) {
-                // 1. TEXT Search (@name): Dùng escapeRediSearchText (Có escape \)
+                // 1. Xử lý tìm kiếm TEXT (Name)
+                // Cần escape để tìm chính xác các từ, thêm * cho prefix match
                 const cleanName = this.escapeRediSearchText(query.search);
                 if (cleanName) {
+                    // "Ao thun" -> "Ao* thun*"
                     const nameTokens = cleanName.split(/\s+/).map(t => `${t}*`).join(' ');
                     conditions.push(`@name:(${nameTokens})`);
                 }
 
-                // 2. TAG Search (@systemTags): Dùng sanitizeTagKeyword (KHÔNG escape \)
-                // Query đúng: @systemTags:{1-3} | Query sai: @systemTags:{\(1\-3}
+                // 2. Xử lý tìm kiếm TAG (SystemTags)
+                // KHÔNG escape, chỉ sanitize ký tự đặc biệt
                 const cleanTagKw = this.sanitizeTagKeyword(query.search);
                 if (cleanTagKw) {
+                    // Tìm chính xác cụm từ trong tags: {Ao thun}
                     conditions.push(`@systemTags:{${cleanTagKw}}`);
+                    
+                    // Nếu keyword có nhiều từ, thử tìm từng từ trong tag (Optional, tăng khả năng hit)
+                    // Ví dụ: User gõ "Bé gái", tìm tag "Bé" hoặc tag "gái"
+                    // const tagTokens = cleanTagKw.split(/\s+/).filter(t => t.length > 1);
+                    // if (tagTokens.length > 0) {
+                    //    conditions.push(`@systemTags:{${tagTokens.join(' | ')}}`);
+                    // }
                 }
             }
 
+            // 3. Filter theo Tag cụ thể (nếu có tham số ?tag=...)
             if (query.tag) {
                 const specificTag = this.sanitizeTagKeyword(query.tag);
                 if (specificTag) {
@@ -286,11 +302,16 @@ export class ProductReadService implements OnModuleInit {
                 }
             }
 
+            // Combine logic: (Name match OR Tag match) AND Status Active
             if (conditions.length > 0) {
                 ftQuery += ` (${conditions.join(' | ')})`;
             }
             
+            // Execute Query nếu có điều kiện tìm kiếm
             if (conditions.length > 0 || query.tag) {
+                // Debug log để kiểm tra câu query cuối cùng
+                // this.logger.debug(`FT.SEARCH QUERY: ${ftQuery}`); 
+
                 const searchRes: any = await this.redis.call(
                     'FT.SEARCH', INDEX_NAME, 
                     ftQuery,
@@ -302,9 +323,13 @@ export class ProductReadService implements OnModuleInit {
                 const total = searchRes[0];
                 if (total > 0) {
                     const products: any[] = [];
+                    // Parse kết quả từ JSON string
                     for (let i = 1; i < searchRes.length; i += 2) {
                         const fields = searchRes[i + 1];
+                        // Kết quả trả về dạng [key, value, key, value...]
+                        // Ở đây chúng ta request 'json' nên nó nằm ở fields[1]
                         if (fields && fields.length >= 2) {
+                             // Đôi khi redis trả về tên field ở index chẵn, value ở index lẻ
                              const jsonStr = fields[fields.indexOf('json') + 1];
                              if(jsonStr) products.push(JSON.parse(jsonStr));
                         }
@@ -317,10 +342,11 @@ export class ProductReadService implements OnModuleInit {
             }
         } catch (e: any) {
             this.logger.error(`RediSearch Query Error: ${e.message} | Query: ${query.search}`);
+            // Fallthrough to DB fallback intentionally
         }
     }
 
-    // --- DB FALLBACK ---
+    // --- DB FALLBACK (Nếu Redis lỗi, không có kết quả, hoặc filter phức tạp chưa index) ---
     if (!resultData) {
         const where: Prisma.ProductWhereInput = {
             status: 'ACTIVE',
@@ -330,10 +356,11 @@ export class ProductReadService implements OnModuleInit {
             ...(query.brandId ? { brandId: Number(query.brandId) } : {}),
         };
 
+        // Logic search DB (chậm hơn nhưng chắc chắn)
         if (query.search) {
              where.OR = [
                 { name: { contains: query.search.trim() } },
-                { systemTags: { string_contains: query.search.trim() } }
+                { systemTags: { string_contains: query.search.trim() } } // Prisma string contains
              ];
         }
         
@@ -374,6 +401,7 @@ export class ProductReadService implements OnModuleInit {
         };
     }
 
+    // Cache kết quả DB (không cache kết quả search text để tiết kiệm mem)
     if (resultData?.data?.length > 0 && !query.search) {
         await this.redis.set(cacheKey, JSON.stringify(resultData), 'EX', 60);
     }
@@ -381,7 +409,10 @@ export class ProductReadService implements OnModuleInit {
     return resultData;
   }
 
-  // ... Các hàm findOnePublic, findRelated, findMoreFromShop, findBoughtTogether giữ nguyên ...
+  // ===========================================================================
+  // Các hàm phụ trợ giữ nguyên logic business
+  // ===========================================================================
+
   async searchSuggestions(keyword: string) {
     if (!keyword || keyword.length < 2) return [];
     try {
@@ -618,6 +649,7 @@ export class ProductReadService implements OnModuleInit {
   }
 
   async getPersonalizedFeed(userId: string, page: number, limit: number) {
+    // Basic implementation placeholder to match previous file structure
     const trackingKey = `user:affinity:${userId}`;
     const start = (page - 1) * limit;
     const stop = start + limit - 1;
@@ -626,6 +658,7 @@ export class ProductReadService implements OnModuleInit {
     if (productIds.length === 0) {
       productIds = await this.redis.zrevrange('global:trending', start, stop);
     }
+    // Note: Assuming productCache.getProductsByIds exists as per original file
     const products = await this.productCache.getProductsByIds(productIds);
     return { data: products, meta: { page, limit, total: 100 } };
   }

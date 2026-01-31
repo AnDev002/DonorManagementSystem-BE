@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, Request, Headers, UseGuards, Post } from '@nestjs/common';
+import { Controller, Get, Param, Query, Request, Headers, UseGuards, Post, ParseUUIDPipe, DefaultValuePipe, ParseIntPipe } from '@nestjs/common';
 import { ProductReadService } from '../services/product-read.service';
 import { Public } from 'src/common/decorators/public.decorator';
 import { JwtAuthGuard } from 'src/modules/auth/guards/jwt.guard';
@@ -123,5 +123,67 @@ export class StoreProductController {
               }))
           };
       });
+  }
+
+  @Get(':id/reviews')
+  async getProductReviews(
+    @Param('id', ParseUUIDPipe) productId: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+    @Query('rating') rating?: number, // Filter theo sao (1-5)
+  ) {
+    const skip = (page - 1) * limit;
+    
+    // Xây dựng điều kiện lọc
+    const whereCondition: any = { productId };
+    if (rating) {
+      whereCondition.rating = Number(rating);
+    }
+
+    // Chạy song song: Lấy list review + Lấy thống kê phân bổ sao
+    const [reviews, total, starCounts] = await Promise.all([
+      // 1. Lấy danh sách review
+      this.prisma.productReview.findMany({
+        where: whereCondition,
+        take: limit,
+        skip: skip,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          user: {
+            select: { name: true, avatar: true } // Chỉ lấy tên và avatar
+          },
+          // order: { select: { items: true } } // Nếu muốn hiện size/màu đã mua
+        }
+      }),
+
+      // 2. Đếm tổng số review (theo filter hiện tại)
+      this.prisma.productReview.count({ where: whereCondition }),
+
+      // 3. Thống kê số lượng từng loại sao (All time) để hiện UI filter
+      this.prisma.productReview.groupBy({
+        by: ['rating'],
+        where: { productId },
+        _count: { rating: true },
+      }),
+    ]);
+
+    // Format lại distribution
+    const distribution = {
+      1: 0, 2: 0, 3: 0, 4: 0, 5: 0
+    };
+    starCounts.forEach(item => {
+      distribution[item.rating] = item._count.rating;
+    });
+
+    return {
+      data: reviews,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+      distribution // Trả về { 5: 10, 4: 2, ... }
+    };
   }
 }

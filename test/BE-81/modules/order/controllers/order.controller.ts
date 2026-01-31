@@ -4,16 +4,11 @@ import { OrderService } from '../order.service';
 import { CreateOrderDto } from '../dto/create-order.dto';
 import { OrderStatus } from '@prisma/client';
 import { SubmitOrderReviewDto } from '../dto/submit-review.dto';
-import { User } from 'src/common/decorators/user.decorator';
-import { ReviewService } from '../review.service';
 
 @Controller('orders')
 @UseGuards(JwtAuthGuard)
 export class OrderController {
-  constructor(
-    private readonly orderService: OrderService,
-    private readonly reviewService: ReviewService,
-  ) {}
+  constructor(private readonly orderService: OrderService) {}
 
   // API tính giá trước khi đặt (Frontend gọi khi user thay đổi voucher, shipping...)
   @Post('preview')
@@ -37,10 +32,6 @@ export class OrderController {
       orderId: order.id,
       paymentUrl: paymentUrl, // <--- THÊM DÒNG NÀY thì Frontend mới nhận được Link
     };
-  }
-  @Post('review')
-  async submitReview(@User() user: any, @Body() dto: SubmitOrderReviewDto) {
-    return this.reviewService.submitReview(user.id, dto);
   }
   
   @Get()

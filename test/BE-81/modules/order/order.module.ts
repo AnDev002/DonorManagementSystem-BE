@@ -29,8 +29,7 @@ import { PaymentModule } from '../payment/payment.module';
   controllers: [OrderController, AdminOrderController],
   providers: [
     OrderService,  
-    ReviewService,
-    OrderProcessor,
+    OrderProcessor
   ],
   exports: [OrderService] 
 })

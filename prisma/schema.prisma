@@ -79,7 +79,8 @@ model User {
   blogPosts BlogPost[]
   shopId         String?
   shop           Shop?        
-
+  reviews     ProductReview[]
+  shopReviews ShopReview[]
   createdVouchers Voucher[]     @relation("SellerVouchers") // Voucher do Seller này tạo
   savedVouchers   UserVoucher[]
 
@@ -114,7 +115,47 @@ model User {
   @@index([createdAt])
   
 }
+model ProductReview {
+  id        String   @id @default(uuid())
+  content   String?  @db.Text
+  rating    Int      @default(5) // 1-5 sao
+  images    Json?    // Mảng URL ảnh đánh giá
+  
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id])
 
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([productId])
+  @@index([rating])
+}
+
+model ShopReview {
+  id        String   @id @default(uuid())
+  content   String?  @db.Text
+  rating    Int      @default(5)
+  
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  
+  shopId    String
+  shop      Shop     @relation(fields: [shopId], references: [id])
+  
+  orderId   String   @unique // <--- QUAN TRỌNG: Thêm @unique để sửa lỗi
+  order     Order    @relation(fields: [orderId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shopId])
+}
 model Shop {
   id            String     @id @default(uuid())
   name          String     // Tên hiển thị của Shop
@@ -132,6 +173,8 @@ model Shop {
   category      Category?    @relation("ShopMainCategory", fields: [categoryId], references: [id])
   status        ShopStatus @default(PENDING)
   banReason     String?
+  reviews ShopReview[]
+  reviewCount Int @default(0)
 
   // --- Cấu hình giao diện (Shop Decoration) ---
   // Lưu JSON cấu trúc trang trí (Banner slider, Featured Products, Video...)
@@ -374,6 +417,9 @@ model Product {
   originalPrice Decimal? @db.Decimal(15, 2) // Giá gốc (để hiện gạch ngang giảm giá)
   stock         Int      @default(0)
 
+  reviews ProductReview[]
+  reviewCount Int @default(0)
+
   // Hình ảnh (Lưu mảng JSON URL ảnh)
   images Json
   status ProductStatus @default(PENDING) // Mặc định tạo xong là chờ duyệt ngay
@@ -550,6 +596,9 @@ model Order {
   voucher   Voucher? @relation(fields: [voucherId], references: [id], onDelete: SetNull)
   shippingOrderCode String? // Mã đơn GHN (ví dụ: L8CC23)
   shippingProvider  String? @default("GHN")
+  productReviews ProductReview[]
+  shopReview     ShopReview?
+  isReviewed     Boolean @default(false)
 
   districtId        Int?    // ID Quận/Huyện (GHN)
   wardCode          String? // Mã Phường/Xã (GHN)

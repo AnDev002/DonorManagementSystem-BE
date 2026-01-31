@@ -474,7 +474,7 @@ export class AdminUsersService {
         let dominantCategoryName: string | null = null;
         
         if (u.role === 'SELLER' && u.shop) {
-             // Cách 1: Ưu tiên lấy từ sản phẩm đang bán nhiều nhất (Logic cũ)
+             // Ưu tiên 1: Lấy từ sản phẩm (Logic cũ)
              const topCat = await this.prisma.product.groupBy({
                  by: ['categoryId'],
                  where: { shopId: u.shop.id, status: 'ACTIVE' },
@@ -490,9 +490,9 @@ export class AdminUsersService {
                  });
                  dominantCategoryName = catInfo?.name || null;
              } 
-             // [SỬA 2]: Thêm Else - Nếu không có sản phẩm, lấy từ danh mục đăng ký
-             else if (u.shop.category) {
-                 dominantCategoryName = u.shop.category.name;
+             // Ưu tiên 2: [SỬA] Nếu chưa có sản phẩm, lấy từ danh mục đăng ký (đã select ở Bước 1)
+             else if ((u.shop as any).category) {
+                 dominantCategoryName = (u.shop as any).category.name;
              }
         }
 

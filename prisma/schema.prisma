@@ -172,6 +172,7 @@ model Shop {
   categoryId    String?      // ID Ngành hàng chủ lực (để Optional vì shop cũ có thể chưa có)
   category      Category?    @relation("ShopMainCategory", fields: [categoryId], references: [id])
   status        ShopStatus @default(PENDING)
+  orders      Order[]
   banReason     String?
   reviews ShopReview[]
   reviewCount Int @default(0)
@@ -599,6 +600,8 @@ model Order {
   productReviews ProductReview[]
   shopReview     ShopReview?
   isReviewed     Boolean @default(false)
+  shopId        String?      
+  shop          Shop?   @relation(fields: [shopId], references: [id])
 
   districtId        Int?    // ID Quận/Huyện (GHN)
   wardCode          String? // Mã Phường/Xã (GHN)

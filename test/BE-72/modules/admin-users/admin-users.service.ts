@@ -646,46 +646,51 @@ export class AdminUsersService {
     };
   }
   async deleteUser(adminId: string, userId: string) {
+    // 1. Kiểm tra User tồn tại
     const user = await this.prisma.user.findUnique({ 
         where: { id: userId },
         include: { shop: true } 
     });
     
     if (!user) throw new NotFoundException('Người dùng không tồn tại');
-    if (user.role === 'ADMIN') throw new BadRequestException('Không thể xóa Admin');
 
+    // 2. Bảo vệ: Không cho phép xóa Admin hoặc chính mình
+    if (user.role === 'ADMIN') {
+      throw new BadRequestException('Không thể xóa tài khoản Quản trị viên');
+    }
+    if (user.id === adminId) {
+        throw new BadRequestException('Không thể tự xóa tài khoản của chính mình');
+    }
+
+    // 3. Thực hiện Xóa trong Transaction để đảm bảo tính toàn vẹn
     await this.prisma.$transaction(async (tx) => {
-        // 1. Nếu là Seller, xử lý Shop và Sản phẩm
         if (user.role === 'SELLER' && user.shop) {
-            await tx.product.deleteMany({ where: { shopId: user.shop.id } });
-            await tx.shop.delete({ where: { id: user.shop.id } });
+            // Xóa toàn bộ sản phẩm của shop này trước
+            await tx.product.deleteMany({ 
+                where: { shopId: user.shop.id } 
+            });
+            
+            // Xóa Shop
+            await tx.shop.delete({
+                where: { id: user.shop.id }
+            });
         }
 
-        // 2. Xóa các dữ liệu phụ trợ liên quan trực tiếp đến userId (Các bảng gây lỗi Foreign Key)
-        // Thêm các bảng này để dọn dẹp sạch sẽ dữ liệu rác
-        await tx.address.deleteMany({ where: { userId: user.id } });
+        // Xóa các dữ liệu liên quan khác
         await tx.cart.deleteMany({ where: { userId: user.id } });
         await tx.pointWallet.deleteMany({ where: { userId: user.id } });
-        
-        // Nếu có bảng Order (Đơn hàng), bạn có thể chọn xóa hoặc chuyển userId về null 
-        // tùy thuộc vào việc bạn có muốn giữ lịch sử đơn hàng không. 
-        // Ở đây ta xóa để bạn test sạch email:
-        await tx.order.deleteMany({ where: { userId: user.id } });
-        
-        // Xóa tin nhắn và thông báo
-        if (tx['message']) await tx['message'].deleteMany({ where: { senderId: user.id } });
-        if (tx['notification']) await tx['notification'].deleteMany({ where: { userId: user.id } });
 
-        // 3. Cuối cùng mới xóa User
+        // Xóa User chính thức
         await tx.user.delete({
             where: { id: user.id }
         });
     });
 
+    // 4. Tracking hành động của Admin
     await this.trackingService.trackEvent(adminId, 'admin-action', {
       type: EventType.DELETE_USER,
       targetId: userId,
-      metadata: { email: user.email }
+      metadata: { email: user.email, role: user.role }
     });
 
     return { success: true, message: `Đã xóa vĩnh viễn tài khoản ${user.email}` };

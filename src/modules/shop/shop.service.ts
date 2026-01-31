@@ -9,7 +9,18 @@ import { UpdateShopProfileDto } from '../auth/dto/update-shop.dto';
 @Injectable()
 export class ShopService {
   constructor(private prisma: PrismaService) {}
-
+  private async resolveShopId(idOrSlug: string): Promise<string | null> {
+    const shop = await this.prisma.shop.findFirst({
+      where: {
+        OR: [
+          { id: idOrSlug },    // Trường hợp tham số là UUID
+          { slug: idOrSlug }   // Trường hợp tham số là Slug
+        ]
+      },
+      select: { id: true }
+    });
+    return shop ? shop.id : null;
+  }
   // 1. Đăng ký Shop mới
   async createShop(userId: string, data: CreateShopDto) {
     // Check xem user đã có shop chưa
@@ -98,7 +109,23 @@ export class ShopService {
   }
 
   // --- 7. [MỚI] Lấy sản phẩm của Shop (Search & Filter) ---
-  async getShopProducts(shopId: string, params: any) {
+  async getShopProducts(shopIdOrSlug: string, params: any) {
+    // 1. Resolve ID thật sự trước khi query Product
+    const shopId = await this.resolveShopId(shopIdOrSlug);
+    
+    // Nếu không tìm thấy Shop, trả về danh sách rỗng thay vì lỗi
+    if (!shopId) {
+        return { 
+          data: [], 
+          meta: { 
+            total: 0, 
+            page: 1, 
+            limit: Number(params.limit) || 12, 
+            last_page: 0 
+          } 
+        };
+    }
+
     const { 
         page = 1, 
         limit = 12, 
@@ -111,13 +138,12 @@ export class ShopService {
     
     const skip = (Number(page) - 1) * Number(limit);
 
-    // 1. Xây dựng điều kiện lọc (Where)
+    // 2. Xây dựng điều kiện lọc (Where)
     const where: Prisma.ProductWhereInput = {
-      shopId: shopId,
+      shopId: shopId, // Sử dụng shopId chuẩn (UUID) đã tìm được ở trên
       status: 'ACTIVE',
     };
     
-    // [UPDATE] Thêm logic này
     // Nếu params có shopCategoryId (Custom Category của Shop)
     if (params.shopCategoryId) {
         where.shopCategoryId = params.shopCategoryId;
@@ -135,12 +161,12 @@ export class ShopService {
       if (maxPrice) where.price.lte = Number(maxPrice);
     }
 
-    // Filter theo Rating (Giả sử bạn có trường rating trong Product hoặc tính toán aggregate)
+    // Filter theo Rating
     if (rating) {
       where.rating = { gte: Number(rating) };
     }
 
-    // 2. Xây dựng điều kiện sắp xếp (OrderBy)
+    // 3. Xây dựng điều kiện sắp xếp (OrderBy)
     let orderBy: any = { createdAt: 'desc' }; // Default: Mới nhất
 
     switch (sort) {
@@ -160,7 +186,7 @@ export class ShopService {
             orderBy = { createdAt: 'desc' };
     }
 
-    // 3. Query DB song song (Lấy data + Đếm tổng)
+    // 4. Query DB song song (Lấy data + Đếm tổng)
     const [products, total] = await Promise.all([
       this.prisma.product.findMany({
         where,
@@ -195,9 +221,15 @@ export class ShopService {
     };
   }
 
-  async getPublicProfile(shopId: string) {
-    const shop = await this.prisma.shop.findUnique({
-      where: { id: shopId },
+  async getPublicProfile(idOrSlug: string) {
+    // 1. Tìm shop linh hoạt (ID hoặc Slug)
+    const shop = await this.prisma.shop.findFirst({
+      where: {
+        OR: [
+          { id: idOrSlug },
+          { slug: idOrSlug }
+        ]
+      },
       select: {
         id: true,
         name: true,
@@ -209,13 +241,13 @@ export class ShopService {
         status: true,
         createdAt: true,
         decoration: true,
-        // Đếm số lượng sản phẩm
         _count: {
           select: { products: { where: { status: 'ACTIVE' } } }
         }
       }
     });
 
+    // 2. Kiểm tra trạng thái
     if (!shop || shop.status !== ShopStatus.ACTIVE) {
       throw new NotFoundException('Cửa hàng không tồn tại hoặc đã bị khóa');
     }
